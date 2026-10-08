@@ -278,8 +278,10 @@ by the library itself.** Two shapes cover what we have:
 
 The Braket path through QDMI shows both directions. In: the circuit a client
 sent, QPY or OpenQASM 2, becomes Braket's self-contained OpenQASM 3 in
-`services/util/braket_transcode.py`, in the gate names the device accepts
-(Braket spells `cx` as `cnot`, `sx` as `v`, and so on). A gate the device does
+the packaged `AmazonBraketBackend`, using its gate aliases and native
+serializer. `services/util/braket_transcode.py` retains QFw's non-verbatim
+compilation policy, a formatting fallback for gates accepted only by the
+broader compiler, and the legacy measurement map. A gate the device does
 not accept is decomposed into ones it does, with no coupling map, because
 Braket compiles and routes a non-verbatim program itself; anything still
 unexpressible fails before a task is created. Out: the device library keys
@@ -295,6 +297,30 @@ both "thick" libraries (raw vendor data) and "thin"/neutral ones (a standard
 one — it works for any `BackendV2`, whereas `qhw-iqm` is provider-specific —
 which would trade the provider adapter's richer output (calibration/quality) for
 one code path. That trade-off is an open decision (Section 12), not settled here.
+
+The provider's MQT Core-backed Qiskit adapter opens each QDMI session and
+owns library registration, catalogue defaults and vendor session parameters.
+The device must be representable by the provider's Qiskit adapter.
+QFw resolves device access, enforces shot caps and deadlines, interrupts the
+wait on cancellation, and translates FoMaC introspection into qhw records.
+The tested package set is in `setup/qdmi-requirements.txt`; both cluster install
+paths consume that file.
+
+The execution path is transitional with MQT Core 4.0, `iqm-qdmi` 1.4 and
+`amazon-braket-qdmi` 1.2. IQM retains its named-qubit conversion. Braket retains
+its broader `supportedOperations` vocabulary and count remapping, including
+multiple classical destinations and last-write semantics for terminal
+measurements. Unbound parameters, unsupported reset and gates after measurement
+fail before a Braket task is submitted. Native `submit_job` keeps per-resource
+S3 settings; QFw polls instead of using the adapter's unbounded result wait.
+
+Remove the legacy converters/remapping and use `backend.run` only after the
+coordinated package releases provide the output-layout contract and provider
+job options. Update the pinned package set in the same change so classical
+counts are mapped exactly once. The upstream work is
+[Core #2626](https://github.com/munich-quantum-toolkit/core/pull/2626),
+[Braket #242](https://github.com/Munich-Quantum-Software/amazon-braket-qdmi-device/pull/242)
+and [IQM #276](https://github.com/iqm-finland/QDMI-on-IQM/pull/276).
 
 ## 9. The gap map
 
@@ -355,12 +381,10 @@ implementation to evaluate the shim against.
     the per-resource descriptor narrows. Lower-level libraries
     are imported lazily, so the service constructs and routes before any real
     library call is made.
-  - `drivers/qdmi_profiles.py` — the vendor-defined parts of QDMI, per
-    provider: how a session opens and from which settings, the program
-    format, what the CUSTOM slots mean, how counts are keyed. `QdmiDriver`
-    keeps the session and job lifecycle and asks the resource's profile for
-    the rest. There is an IQM profile (QDMI-on-IQM) and a Braket profile
-    (MQSC's Amazon Braket device library).
+  - `drivers/qdmi_profiles.py` — QFw resource settings, execution policy,
+    and temporary program/result adaptation for IQM and Braket. The packaged
+    provider adapters open sessions through MQT Core; `QdmiDriver` retains
+    the QFw job wait and qhw record conversion.
 - **`dev-config/config.yaml`** (resolved via `services/util/device_access.py`)
   gains `libraries:`, `preference:`, and per-resource `caps:` — the persistent
   source for `resolve_descriptor()`, replacing the built-in default.

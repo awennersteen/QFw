@@ -11,6 +11,9 @@ import types
 import pytest
 from qiskit import QuantumCircuit, qasm2
 
+AmazonBraketBackend = pytest.importorskip(
+	"amazon.braket.qdmi.qiskit").AmazonBraketBackend
+
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 SERVICES = str(REPO_ROOT / "services")
@@ -32,7 +35,6 @@ if "defw_exception" not in sys.modules:
 		sys.modules["defw_exception"] = stub
 
 from defw_exception import DEFwExecutionError  # noqa: E402
-from util import braket_transcode  # noqa: E402
 from util.braket_transcode import remap_counts, to_braket_qasm3  # noqa: E402
 
 
@@ -40,6 +42,24 @@ from util.braket_transcode import remap_counts, to_braket_qasm3  # noqa: E402
 BROAD = {"rx", "ry", "cz", "rz", "h", "cnot", "x", "y", "z", "s", "si", "t",
 	"ti", "v", "vi", "swap", "phaseshift", "cphaseshift"}
 RESTRICTED = {"rx", "ry", "cz"}
+
+
+class _Device:
+	def __init__(self, names):
+		self.names = names
+
+	def operations(self):
+		return [types.SimpleNamespace(name=lambda n=n: n) for n in self.names]
+
+
+def _backend(accepted, native=None):
+	# Skip live session/Target construction while exercising the released
+	# provider serializer. CUSTOM1 can be broader than the native gates.
+	backend = object.__new__(AmazonBraketBackend)
+	backend._device = _Device(accepted if native is None else native)
+	backend._device.query_custom_operations = lambda _slot: [
+		types.SimpleNamespace(name=lambda n=n: n) for n in accepted]
+	return backend
 
 
 def _ghz():
@@ -72,7 +92,7 @@ def _gate_names(program):
 
 
 def test_a_broad_vocabulary_only_renames():
-	program, measurement = to_braket_qasm3(_ghz(), BROAD)
+	program, measurement = to_braket_qasm3(_ghz(), _backend(BROAD))
 
 	assert program.startswith("OPENQASM 3.0;")
 	assert "include" not in program
@@ -89,7 +109,7 @@ def test_a_broad_vocabulary_only_renames():
 
 
 def test_a_restricted_vocabulary_decomposes_then_renames():
-	program, measurement = to_braket_qasm3(_ghz(), RESTRICTED)
+	program, measurement = to_braket_qasm3(_ghz(), _backend(RESTRICTED))
 
 	assert _gate_names(program) <= RESTRICTED
 	assert "cz" in _gate_names(program)
@@ -103,7 +123,7 @@ def test_openqasm2_input_is_read_through_the_shared_loader():
 	from util.iqm_transcode import load_qiskit_circuit
 	circuit = load_qiskit_circuit(qasm2.dumps(_ghz()))
 
-	program, _measurement = to_braket_qasm3(circuit, BROAD)
+	program, _measurement = to_braket_qasm3(circuit, _backend(BROAD))
 
 	assert "cnot q[0], q[1];" in program
 
@@ -115,7 +135,7 @@ def test_an_unrepresentable_circuit_fails_before_submission():
 
 	# A device with no two-qubit gate cannot take a Toffoli.
 	with pytest.raises(DEFwExecutionError, match="operation set"):
-		to_braket_qasm3(circuit, {"rx"})
+		to_braket_qasm3(circuit, _backend({"rx"}))
 
 
 def test_braket_only_names_pass_when_the_device_accepts_them():
@@ -127,7 +147,7 @@ def test_braket_only_names_pass_when_the_device_accepts_them():
 	circuit.append(Gate("ms", 2, [0.0, 0.0, 0.25]), [0, 1])
 	circuit.measure([0, 1], [0, 1])
 
-	program, _measurement = to_braket_qasm3(circuit, {"gpi", "gpi2", "ms"})
+	program, _measurement = to_braket_qasm3(circuit, _backend({"gpi", "gpi2", "ms"}))
 
 	assert "gpi(0.5) q[0];" in program
 	# Qiskit's exporter prints a zero parameter as 0.
@@ -139,7 +159,7 @@ def test_idle_qubits_are_dropped_and_the_map_follows():
 	circuit.x(2)
 	circuit.measure(2, 0)
 
-	program, measurement = to_braket_qasm3(circuit, BROAD)
+	program, measurement = to_braket_qasm3(circuit, _backend(BROAD))
 
 	assert "qubit[1] q;" in program
 	assert "x q[0];" in program
@@ -156,7 +176,7 @@ def test_the_asymmetric_smoke_circuit_remaps_to_classical_bit_order():
 	circuit.measure(0, 2)
 	circuit.measure(1, 1)
 
-	program, measurement = to_braket_qasm3(circuit, BROAD)
+	program, measurement = to_braket_qasm3(circuit, _backend(BROAD))
 
 	assert "c[0] = measure q[2];" in program
 	assert "c[2] = measure q[0];" in program
@@ -167,6 +187,44 @@ def test_the_asymmetric_smoke_circuit_remaps_to_classical_bit_order():
 	assert remap_counts({"001": 10}, measurement) == {"100": 10}
 
 
-def test_the_rename_table_round_trips():
-	for qiskit_name, braket_name in braket_transcode.QISKIT_TO_BRAKET.items():
-		assert braket_transcode.BRAKET_TO_QISKIT[braket_name] == qiskit_name
+def test_broader_supported_operations_use_the_provider_aliases():
+	program, _measurement = to_braket_qasm3(
+		_ghz(), _backend(BROAD, native=RESTRICTED))
+	assert "cnot q[0], q[1];" in program
+	assert "v q[1];" in program
+	assert "si q[2];" in program
+
+
+@pytest.mark.parametrize("unsupported", ["reset", "mid-circuit", "unbound"])
+def test_unsupported_inputs_fail_before_native_submission(unsupported):
+	from qiskit.circuit import Parameter
+	circuit = QuantumCircuit(1, 1)
+	if unsupported == "reset":
+		circuit.reset(0)
+	elif unsupported == "mid-circuit":
+		circuit.measure(0, 0)
+		circuit.x(0)
+	else:
+		circuit.rx(Parameter("theta"), 0)
+	circuit.measure(0, 0)
+	with pytest.raises(DEFwExecutionError):
+		to_braket_qasm3(circuit, _backend(BROAD))
+
+
+def test_repeated_terminal_measurement_keeps_both_classical_destinations():
+	circuit = QuantumCircuit(1, 2)
+	circuit.x(0)
+	circuit.measure(0, 0)
+	circuit.measure(0, 1)
+	_program, measurement = to_braket_qasm3(circuit, _backend(BROAD))
+	assert remap_counts({"1": 10}, measurement) == {"11": 10}
+
+
+def test_one_qubit_can_fill_multiple_classical_bits():
+	measurement = {"num_clbits": 3, "map": [(0, 0), (0, 2)]}
+	assert remap_counts({"1": 10}, measurement) == {"101": 10}
+
+
+def test_the_last_classical_write_wins_after_a_repeated_qubit():
+	measurement = {"num_clbits": 2, "map": [(0, 0), (1, 0), (0, 1)]}
+	assert remap_counts({"01": 10}, measurement) == {"10": 10}

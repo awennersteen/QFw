@@ -1,28 +1,5 @@
-# Provider profiles for the QDMI driver.
-#
-# QDMI is one C interface, but each device library behind it fills the
-# vendor-defined parts differently: how a session is opened and from which
-# settings, which program format a job takes, what the CUSTOM session, job
-# and device slots mean, and how a counts histogram is keyed. The driver
-# (qdmi_driver.py) keeps the session and job lifecycle in one place and asks
-# the resource's profile for those parts. A profile is chosen from the
-# resource descriptor's provider (descriptor.py), so adding a provider means
-# adding a profile here and nothing in the driver.
-#
-# The IQM profile is the driver's behavior from before profiles existed,
-# moved here unchanged: QDMI-on-IQM opens on a server URL, an API token and
-# a quantum computer alias, takes an IQM_JSON program, and publishes the
-# active calibration set id in device CUSTOM1.
-#
-# The Braket profile drives MQSC's Amazon Braket device library: a session is
-# one device ARN, a job is one Braket quantum task, the program is Braket's
-# OpenQASM 3, results come back through S3, and the AWS identity is the
-# service process's own (the AWS SDK credential chain), never a token QFw
-# holds. Its CUSTOM1 is the supported-operations list, not a calibration id.
-#
-# Every import of a device library or of mqt.core is deferred to the call
-# that needs it, so a service builds and routes where the libraries are
-# absent, and so a cancel that arrives before submission needs none of them.
+# QFw settings and policy for the MQT Core-backed provider adapters.
+# Imports stay lazy so services can start without a live device or credentials.
 
 from . import fomac_normalize
 from defw_exception import DEFwExecutionError
@@ -102,19 +79,15 @@ class QdmiProfile:
 		reservation."""
 		raise NotImplementedError
 
-	def definition(self, access):
-		"""The mqt.core.qdmi.driver.DeviceDefinition to register."""
-		raise NotImplementedError
-
-	def open_kwargs(self, access):
-		"""Keyword arguments for mqt.core.qdmi.driver.open_device."""
+	def open_backend(self, access):
+		"""Open the provider's MQT Core QDMI backend."""
 		raise NotImplementedError
 
 	def describe(self, access):
 		# What to log once the session is open.
 		return access.get("qc_alias") or access.get("base_url")
 
-	def encode(self, driver, source, info, device):
+	def encode(self, driver, source, info, backend):
 		"""Encode a circuit for the device library.
 
 		Returns (program, program_format, measurement): the program as the
@@ -218,27 +191,13 @@ class IqmQdmiProfile(QdmiProfile):
 			"qc_alias": provider_device_id or device_id,
 		}
 
-	def definition(self, access):
-		# The IQM device library is registered under the stable device ID
-		# iqm-qdmi publishes.
-		from iqm.qdmi import (IQM_QDMI_DEVICE_ID, IQM_QDMI_LIBRARY_PATH,
-				IQM_QDMI_PREFIX)
-		from mqt.core.qdmi.driver import DeviceDefinition
-		return DeviceDefinition(
-			IQM_QDMI_DEVICE_ID,
-			str(IQM_QDMI_LIBRARY_PATH),
-			IQM_QDMI_PREFIX)
+	def open_backend(self, access):
+		from iqm.qdmi.qiskit import IQMBackend
+		return IQMBackend(
+			base_url=access["base_url"], token=access["token"],
+			qc_alias=access.get("qc_alias"))
 
-	def open_kwargs(self, access):
-		# qc_alias is passed as the device session's custom2 parameter (as
-		# iqm.qdmi.qiskit does).
-		return {
-			"base_url": access.get("base_url"),
-			"token": access.get("token"),
-			"custom2": access.get("qc_alias"),
-		}
-
-	def encode(self, driver, source, info, device):
+	def encode(self, driver, source, info, backend):
 		# Transcode to an IQM circuit with the shared util and serialize it as
 		# the single-circuit IQM_JSON program QDMI-on-IQM takes. Note the
 		# QRMI/QDMI difference: QDMI's IQM_JSON program is a SINGLE circuit,
@@ -251,6 +210,7 @@ class IqmQdmiProfile(QdmiProfile):
 		# Serialization stays a driver method, so a test can stand in for it.
 		from util.iqm_transcode import build_iqm_circuit
 		mapping = info.get("iqm_qubit_mapping") or info.get("qubit_mapping")
+		device = backend.device
 		topo = fomac_normalize.extract_topology(device)
 		dynamic = iqm_architecture(topo, fomac_normalize._calibration_set_id(
 			device, self.calibration_set_slot))
@@ -293,44 +253,32 @@ class BraketQdmiProfile(QdmiProfile):
 			"reservation_arn": self._descriptor.get("reservation_arn") or None,
 		}
 
-	def definition(self, access):
-		from amazon.braket.qdmi import (AMAZON_BRAKET_QDMI_LIBRARY_PATH,
-				AMAZON_BRAKET_QDMI_PREFIX)
-		from mqt.core.qdmi.driver import DeviceDefinition
-		return DeviceDefinition(
-			access["qdmi_device_id"],
-			str(AMAZON_BRAKET_QDMI_LIBRARY_PATH),
-			AMAZON_BRAKET_QDMI_PREFIX)
-
-	def open_kwargs(self, access):
-		# The library's session parameters are aliases of QDMI's: DEVICEARN is
-		# BASEURL, REGION is CUSTOM2 and RESERVATION_ARN is CUSTOM3
-		# (amazon-braket-qdmi-device/constants.hpp). The Region defaults to
-		# the one in the ARN, and a reservation ARN makes the device status
-		# ignore public execution windows.
-		kwargs = {"base_url": access["base_url"]}
-		if access.get("region"):
-			kwargs["custom2"] = access["region"]
-		if access.get("reservation_arn"):
-			kwargs["custom3"] = access["reservation_arn"]
-		return kwargs
+	def open_backend(self, access):
+		from amazon.braket.qdmi.qiskit import AmazonBraketBackend
+		return AmazonBraketBackend(
+			device_id=access["qdmi_device_id"], device_arn=access["base_url"],
+			region=access.get("region"),
+			reservation_arn=access.get("reservation_arn"))
 
 	def describe(self, access):
 		return access.get("base_url")
 
-	def encode(self, driver, source, info, device):
+	def encode(self, driver, source, info, backend):
 		# Braket's OpenQASM 3, in the gate names this device accepts. The
 		# measurement map comes back so result_counts can key the histogram
 		# onto the circuit's classical bits.
-		from util.braket_transcode import (accepted_operation_names,
-				to_braket_qasm3)
+		from util.braket_transcode import to_braket_qasm3
 		from util.iqm_transcode import load_qiskit_circuit
 		circuit = load_qiskit_circuit(source)
 		program, measurement = to_braket_qasm3(
-			circuit, accepted_operation_names(device))
+			circuit, backend)
 		return program, "QASM3", measurement
 
 	def job_kwargs(self, info):
+		# Temporary: MQT Core 4.0's Backend.run cannot forward these job
+		# parameters. Keep native submission until the coordinated releases
+		# expose the job-parameter hook and Braket's named S3 option.
+		# https://github.com/Munich-Quantum-Software/amazon-braket-qdmi-device/issues/204
 		# OUTPUTS3URI is job CUSTOM1 and RESERVATION_ARN is job CUSTOM3.
 		# Without a URI the library uses the account's standard regional
 		# bucket, which needs STS and bucket-management permissions on first

@@ -261,35 +261,11 @@ def _operations(device):
 
 
 def _operation_loci(op):
-	# A FoMaC Operation exposes the loci it supports: site_pairs() for local
-	# 2-qubit operations, otherwise sites() (each site is a 1-qubit locus).
-	loci = []
-	seen = set()
-	pairs = None
-	try:
-		pairs = op.site_pairs()
-	except Exception:
-		pairs = None
-	if pairs:
-		for pair in pairs:
-			locus = [_site_label(pair[0]), _site_label(pair[1])]
-			key = tuple(locus)
-			if key not in seen:
-				seen.add(key)
-				loci.append(locus)
-		return sorted(loci, key=_locus_key)
-	sites = None
-	try:
-		sites = op.sites()
-	except Exception:
-		sites = None
-	for site in (sites or []):
-		locus = [_site_label(site)]
-		key = tuple(locus)
-		if key not in seen:
-			seen.add(key)
-			loci.append(locus)
-	return sorted(loci, key=_locus_key)
+	# Topology and calibration must use the same ordered site tuples.
+	loci = {
+		tuple(_site_label(site) for site in locus)
+		for locus in _operation_loci_sites(op) if locus}
+	return sorted((list(locus) for locus in loci), key=_locus_key)
 
 
 def _site_metric(site, attr):
@@ -351,7 +327,15 @@ def _operation_loci_sites(op):
 	except Exception:
 		sites = None
 	if sites:
-		return [[site] for site in sites]
+		# QDMI flattens ordered tuples for every arity, not just pairs.
+		# Older duck-typed callers provide only single-site operations.
+		try:
+			arity = op.qubits_num()
+		except AttributeError:
+			arity = 1
+		if not arity or arity < 1 or len(sites) % arity:
+			raise ValueError("QDMI operation has incomplete or unknown site tuples")
+		return [list(sites[i:i + arity]) for i in range(0, len(sites), arity)]
 	return [[]]
 
 

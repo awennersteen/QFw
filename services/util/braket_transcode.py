@@ -16,28 +16,9 @@
 
 from defw_exception import DEFwExecutionError
 
-# Qiskit gate name -> Braket OpenQASM name, where the two differ. Braket's
-# dialect spells several standard gates its own way; the rest coincide. These
-# are the gate aliases of MQSC's amazon.braket.qdmi.qiskit adapter.
-QISKIT_TO_BRAKET = {
-	"cx": "cnot",
-	"ccx": "ccnot",
-	"cp": "cphaseshift",
-	"p": "phaseshift",
-	"rxx": "xx",
-	"ryy": "yy",
-	"rzz": "zz",
-	"sdg": "si",
-	"sx": "v",
-	"sxdg": "vi",
-	"tdg": "ti",
-	"id": "i",
-}
-BRAKET_TO_QISKIT = {
-	braket: qiskit for qiskit, braket in QISKIT_TO_BRAKET.items()}
-
-# Not gates. They pass through whatever the device's operation set says.
-DIRECTIVES = frozenset({"barrier", "measure", "reset"})
+# Measurement and barrier are output/directive syntax. Reset needs explicit
+# device support, just like a gate.
+DIRECTIVES = frozenset({"barrier", "measure"})
 
 # The technology family of a Braket device, from the vendor segment of its
 # ARN: arn:aws:braket:<region>::device/qpu/<vendor>/<name>, or
@@ -95,31 +76,24 @@ def accepted_operation_names(device):
 	return names
 
 
-def to_braket_qasm3(circuit, accepted):
-	"""Serialize a Qiskit circuit as Braket's self-contained OpenQASM 3.
+def to_braket_qasm3(circuit, backend):
+	"""Return Braket OpenQASM 3 and the legacy counts' measurement map."""
+	from qiskit.converters import circuit_to_dag, dag_to_circuit
+	from mqt.core.qdmi import ProgramFormat
 
-	Returns (program, measurement). `measurement` is what remap_counts needs
-	to key the device library's histogram onto the circuit: the circuit's
-	classical bit count and the (program qubit, classical bit) pairs of its
-	measurements.
+	accepted = accepted_operation_names(backend.device)
 
-	Gates the device spells differently are renamed. Gates it does not accept
-	are decomposed into ones it does, with no coupling map, because Braket
-	routes a non-verbatim program on its side. Idle qubits are dropped, since
-	the simulators want contiguous indices.
-	"""
-	accepted = {str(name).lower() for name in accepted}
-	try:
-		from qiskit import qasm3
-		from qiskit.circuit import QuantumRegister
-		from qiskit.converters import circuit_to_dag, dag_to_circuit
-	except Exception as exc:
-		raise DEFwExecutionError(
-			f"transcoding to Braket OpenQASM 3 needs qiskit: {exc}") from exc
-
+	# Temporary: Braket's QPU Target contains only native gates, while its
+	# non-verbatim compiler also accepts supportedOperations (CUSTOM1).
+	# Reuse the adapter's aliases and serializer, retaining this broader
+	# vocabulary until the adapter exposes that compilation contract.
+	# https://github.com/Munich-Quantum-Software/amazon-braket-qdmi-device/issues/207
 	def braket_name(name):
 		name = name.lower()
-		return name if name in accepted else QISKIT_TO_BRAKET.get(name, name)
+		if name in accepted:
+			return name
+		aliases = backend._map_qiskit_gate_to_operation_names(name)
+		return min(aliases & accepted, default=name)
 
 	def unaccepted(circ):
 		return sorted({
@@ -127,43 +101,61 @@ def to_braket_qasm3(circuit, accepted):
 			if instruction.operation.name.lower() not in DIRECTIVES
 			and braket_name(instruction.operation.name) not in accepted})
 
-	missing = unaccepted(circuit)
-	if missing:
-		circuit = _decompose(circuit, accepted)
-		still = unaccepted(circuit)
-		if still:
+	if circuit.parameters:
+		raise DEFwExecutionError("Braket circuits must have bound parameters")
+	# The legacy histogram carries final qubit values only. It cannot
+	# recover an earlier measurement followed by a gate. Remove this guard
+	# with the library's program-output release, after checking its subset.
+	# https://github.com/Munich-Quantum-Software/amazon-braket-qdmi-device/pull/242
+	measuring = False
+	for instruction in circuit.data:
+		name = instruction.operation.name.lower()
+		if name == "measure":
+			measuring = True
+		elif measuring and name != "barrier":
 			raise DEFwExecutionError(
-				f"the device accepts none of {still}, and they could not be "
+				"Braket's legacy QDMI results require terminal measurements")
+
+	if unaccepted(circuit):
+		circuit = _decompose(circuit, accepted, backend)
+		if missing := unaccepted(circuit):
+			raise DEFwExecutionError(
+				f"the device accepts none of {missing}, and they could not be "
 				f"decomposed into its operation set {sorted(accepted)}")
 
-	num_clbits = circuit.num_clbits
 	dag = circuit_to_dag(circuit)
 	dag.remove_qubits(*(set(dag.idle_wires()) & set(dag.qubits)))
 	program_circuit = dag_to_circuit(dag)
-	if program_circuit.qubits and not program_circuit.qregs:
-		program_circuit.add_register(
-			QuantumRegister(bits=program_circuit.qubits, name="q"))
 	measurement_map = []
-	used = set()
 	for index, instruction in enumerate(program_circuit.data):
-		name = instruction.operation.name
-		if name.lower() == "measure":
+		name = instruction.operation.name.lower()
+		if name == "measure":
 			measurement_map.append((
 				program_circuit.find_bit(instruction.qubits[0]).index,
 				program_circuit.find_bit(instruction.clbits[0]).index))
-			continue
-		if name.lower() in DIRECTIVES:
-			continue
-		new_name = braket_name(name)
-		used.add(new_name)
-		if new_name != name:
-			program_circuit.data[index] = instruction.replace(
-				operation=instruction.operation.copy(name=new_name))
-	# Every gate is declared as basis, so the exporter writes none of them
-	# out as a definition in terms of U, which Braket would not take.
-	program = qasm3.dumps(
-		program_circuit, includes=(), basis_gates=sorted(used))
-	return program, {"num_clbits": num_clbits, "map": measurement_map}
+		elif name not in DIRECTIVES:
+			new_name = braket_name(name)
+			if new_name != name:
+				program_circuit.data[index] = instruction.replace(
+					operation=instruction.operation.copy(name=new_name))
+	native = {op.name().lower() for op in _operations(backend.device)}
+	used = {inst.operation.name for inst in program_circuit.data} - DIRECTIVES
+	if used <= native:
+		# MQT Core's serialization hook suffices for the native vocabulary.
+		program, _fmt = backend._serialize_circuit(
+			program_circuit, [ProgramFormat.QASM3])
+	else:
+		# Temporary: the 1.2 adapter's DAG round trip resets standard gate
+		# names and re-aliases them against only native operations. Serialize
+		# the broader vocabulary directly until #207's contract is supported.
+		from qiskit import qasm3
+		from qiskit.circuit import QuantumRegister
+		if program_circuit.qubits and not program_circuit.qregs:
+			program_circuit.add_register(
+				QuantumRegister(bits=program_circuit.qubits, name="q"))
+		program = qasm3.dumps(program_circuit, includes=(), basis_gates=sorted(used))
+	return program, {
+		"num_clbits": program_circuit.num_clbits, "map": measurement_map}
 
 
 def remap_counts(counts, measurement):
@@ -176,6 +168,10 @@ def remap_counts(counts, measurement):
 	so rebuild each key from the measurement map recorded at transcode time.
 	An unmeasured bit reads 0, as it does in Qiskit.
 	"""
+	# Temporary for amazon-braket-qdmi 1.2. Delete with its program-output
+	# release; applying this map to already-normalized counts would corrupt
+	# permuted outputs. Update setup/qdmi-requirements.txt in the same change.
+	# https://github.com/Munich-Quantum-Software/amazon-braket-qdmi-device/pull/242
 	if not counts or not isinstance(measurement, dict):
 		return counts
 	pairs = list(measurement.get("map") or [])
@@ -187,10 +183,6 @@ def remap_counts(counts, measurement):
 	# the highest measured qubit.
 	position = {
 		qubit: len(measured) - 1 - rank for rank, qubit in enumerate(measured)}
-	clbit_of = {}
-	for qubit, clbit in pairs:
-		# The last measurement of a qubit is the one that lands, as in Qiskit.
-		clbit_of[qubit] = clbit
 	remapped = {}
 	for key, count in counts.items():
 		bits = str(key)
@@ -199,14 +191,14 @@ def remap_counts(counts, measurement):
 				f"Braket counts key {key!r} does not cover the "
 				f"{len(measured)} measured qubits")
 		out = ["0"] * num_clbits
-		for qubit, clbit in clbit_of.items():
+		for qubit, clbit in pairs:
 			out[num_clbits - 1 - clbit] = bits[position[qubit]]
 		new_key = "".join(out)
 		remapped[new_key] = remapped.get(new_key, 0) + count
 	return remapped
 
 
-def _decompose(circuit, accepted):
+def _decompose(circuit, accepted, backend):
 	# Rewrite into Qiskit gates whose Braket spelling the device accepts. Only
 	# standard gates can be a transpile basis; a Braket-only name (gpi, ms,
 	# ...) has no Qiskit gate to decompose into and is left to the rename.
@@ -214,7 +206,8 @@ def _decompose(circuit, accepted):
 	from qiskit.circuit.library import get_standard_gate_name_mapping
 	standard = set(get_standard_gate_name_mapping()) - DIRECTIVES
 	basis = sorted(
-		{BRAKET_TO_QISKIT.get(name, name) for name in accepted} & standard)
+		name for name in standard
+		if backend._map_qiskit_gate_to_operation_names(name) & accepted)
 	if not basis:
 		return circuit
 	try:
