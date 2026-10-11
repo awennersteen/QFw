@@ -132,12 +132,6 @@ def _local_registration_ready(defw_module):
 
 
 def _ensure_local_registration(defw_module):
-	uq.qpm_directory_registered = False
-	records = _site_registration_records(defw_module)
-	if not records:
-		logging.error("no QPM service records available for local registration")
-		return False
-
 	endpoint = _local_dirsvc_endpoint()
 	state = getattr(defw_module, LOCAL_REGISTRATION_STATE_ATTR, None)
 	if not isinstance(state, dict):
@@ -145,13 +139,24 @@ def _ensure_local_registration(defw_module):
 		setattr(defw_module, LOCAL_REGISTRATION_STATE_ATTR, state)
 	client = getattr(defw_module, "dirsvc", None)
 	if client is None:
+		uq.qpm_directory_registered = False
 		return False
 	registration = state.get(endpoint)
 	if isinstance(registration, dict) and \
 	   registration.get("client") is client:
 		uq.qpm_directory_registered = True
 		return True
+	# Only now is there a registration to make, and only now is the
+	# advertisement needed. The monitor asks once a second, and building
+	# the records before this check ran every service's query() each
+	# time, for nothing: a description logged at debug every second, and
+	# exported by the logs tier.
+	uq.qpm_directory_registered = False
 	state.pop(endpoint, None)
+	records = _site_registration_records(defw_module)
+	if not records:
+		logging.error("no QPM service records available for local registration")
+		return False
 	peer = _site_registration_peer(defw_module)
 	registered = []
 	for record in records:
@@ -190,29 +195,34 @@ def _site_registration_ready(defw_module):
 
 
 def _ensure_site_registration(defw_module):
-	uq.qpm_directory_registered = False
 	with _site_registration_lock:
-		records = _site_registration_records(defw_module)
-		if not records:
-			logging.error(
-				"no QPM service records available for site registration")
-			return False
-
 		state = getattr(defw_module, SITE_REGISTRATION_STATE_ATTR, None)
 		if not isinstance(state, dict):
 			state = {}
 			setattr(defw_module, SITE_REGISTRATION_STATE_ATTR, state)
 
-		peer = _site_registration_peer(defw_module)
+		# The advertisement is built when the first endpoint turns out to
+		# need a registration, and shared by the rest; see the local case.
+		records = None
+		peer = None
 		for endpoint in _site_dirsvc_endpoints():
 			client = _site_dirsvc_client(defw_module, endpoint)
 			if client is None:
+				uq.qpm_directory_registered = False
 				return False
 			registration = state.get(endpoint)
 			if isinstance(registration, dict) and \
 			   registration.get("client") is client:
 				continue
+			uq.qpm_directory_registered = False
 			state.pop(endpoint, None)
+			if records is None:
+				records = _site_registration_records(defw_module)
+				if not records:
+					logging.error(
+						"no QPM service records available for site registration")
+					return False
+				peer = _site_registration_peer(defw_module)
 			registered = []
 			for record in records:
 				try:
