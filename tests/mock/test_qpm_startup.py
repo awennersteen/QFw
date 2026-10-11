@@ -1,3 +1,6 @@
+from types import SimpleNamespace
+
+
 def site_qpm_record():
 	return {
 		"service_id": "qpm:iqm:site-a",
@@ -385,6 +388,93 @@ def test_qpm_startup_restores_local_registration_after_dirsvc_reconnect(
 	assert startup._ensure_local_registration(fake_defw) is True
 	assert len(second_dirsvc.registrations) == 1
 	assert uq.qpm_directory_registered is True
+
+
+class CountingQPM:
+	"""A service class whose query() counts how often the QPM asked it."""
+	queries = 0
+
+	def __init__(self, start=False):
+		pass
+
+	def query(self):
+		CountingQPM.queries += 1
+		advertisement = site_qpm_record()
+		for key in ("runtime_id", "peer_handle", "endpoint"):
+			advertisement.pop(key)
+		return advertisement
+
+
+class QueriedDefw(FakeDefw):
+	"""A defw module without ready-made records: the advertisement comes
+	from the service's query(), the way it does on a real QPM."""
+	qpm_site_service_records = None
+	services = [("qpm", SimpleNamespace(
+		svc_info={"name": "QPM"}, service_classes=[CountingQPM]))]
+
+	def __init__(self, **kwargs):
+		super().__init__(**kwargs)
+		# The advertisement is enriched from the runtime's own endpoint.
+		self.me = SimpleNamespace(my_endpoint=lambda: self.endpoint)
+
+
+def test_qpm_startup_site_registration_monitor_does_not_query_while_registered(
+		monkeypatch):
+	import util.qpm.startup as startup
+	import util.qpm.util_qpm as uq
+
+	reset_qpm_state(uq)
+	CountingQPM.queries = 0
+	first_dirsvc = FakeSiteDirSvc()
+	second_dirsvc = FakeSiteDirSvc()
+	fake_defw = QueriedDefw(site_ready={"site-a"}, site_dirsvc=first_dirsvc)
+	monkeypatch.setenv("QFW_QPM_OPERATION_MODE", "long-running")
+	monkeypatch.setenv("QFW_SITE_DIRSVC_ENDPOINTS", "site-a")
+
+	assert startup._ensure_site_registration(fake_defw) is True
+	assert CountingQPM.queries == 1
+	assert len(first_dirsvc.registrations) == 1
+	# The monitor asks once a second. While the registration holds, the
+	# answer is a lookup: a service's query() logs its whole description
+	# at debug, and running it every second filled every QPM's log, and
+	# the logs tier, with it.
+	for _ in range(5):
+		assert startup._ensure_site_registration(fake_defw) is True
+		assert uq.qpm_directory_registered is True
+	assert CountingQPM.queries == 1
+	assert len(first_dirsvc.registrations) == 1
+	# A directory that came back is one more query and one registration.
+	fake_defw.dirsvc = second_dirsvc
+	assert startup._ensure_site_registration(fake_defw) is True
+	assert CountingQPM.queries == 2
+	assert len(second_dirsvc.registrations) == 1
+	assert uq.qpm_directory_registered is True
+
+
+def test_qpm_startup_local_registration_monitor_does_not_query_while_registered(
+		monkeypatch):
+	import util.qpm.startup as startup
+	import util.qpm.util_qpm as uq
+
+	reset_qpm_state(uq)
+	CountingQPM.queries = 0
+	first_dirsvc = FakeSiteDirSvc()
+	second_dirsvc = FakeSiteDirSvc()
+	fake_defw = QueriedDefw(dirsvc=first_dirsvc)
+	monkeypatch.delenv("QFW_QPM_OPERATION_MODE", raising=False)
+	monkeypatch.delenv("QFW_SITE_DIRSVC_ENDPOINTS", raising=False)
+
+	assert startup._ensure_local_registration(fake_defw) is True
+	assert CountingQPM.queries == 1
+	for _ in range(5):
+		assert startup._ensure_local_registration(fake_defw) is True
+		assert uq.qpm_directory_registered is True
+	assert CountingQPM.queries == 1
+	assert len(first_dirsvc.registrations) == 1
+	fake_defw.dirsvc = second_dirsvc
+	assert startup._ensure_local_registration(fake_defw) is True
+	assert CountingQPM.queries == 2
+	assert len(second_dirsvc.registrations) == 1
 
 
 def test_qpm_startup_ignores_non_directory_peer_events(monkeypatch):
