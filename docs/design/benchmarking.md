@@ -452,51 +452,83 @@ target environment that Phase 1 asked for follows.
 #### Measured in the target environment, October 2026: the budget
 
 The instrumented-versus-uninstrumented delta on the QFw-SLURM-Cluster
-reference deployment (the image of 2026-10-07: Rocky Linux 10 on an arm64
+reference deployment (the image of 2026-10-09: Rocky Linux 10 on an arm64
 Docker VM, CPython 3.12, `opentelemetry-sdk` 1.45.1 in the service plane and
-1.44.0 in the client's venv), through the production path: a Qiskit client
-in a Slurm allocation, the site fake IQM QPM, and this design's collector
-profile receiving OTLP over HTTP.
+1.44.0 in the client's venv, QFw main `b82d19f`), through the production
+path: a Qiskit client in a Slurm allocation, the site fake IQM QPM, and this
+design's collector profile receiving OTLP over HTTP, with Prometheus, Tempo
+and Loki behind the collector.
 
 Workload: `examples/qfw_job_stream.sh --service-mode site --backend fake-iqm
 --jobs 300 --interval 0 --qubits 3 --circuits ghz --shots 100`, one worker:
 300 identical three-qubit GHZ jobs back to back. The fake IQM executes a
 job in about a millisecond, which makes this the fastest job the framework
-can run and the relative overhead a worst case. Three telemetry states,
-three repetitions each, interleaved, the QPM restarted into each state.
+can run and the relative overhead a worst case. Seven telemetry states,
+each adding one thing to the state before it, three repetitions in that
+order and three in the reverse order, the QPM restarted into each state.
 Latency and client CPU come from the stream's own summary, the QPM's CPU
-from `/proc`. Medians of the three repetitions:
+from `/proc`. Medians of the six repetitions (2026-10-10); the two orders
+agree on every delta to within 0.1 ms of p50, one state excepted, and to
+within 0.5 ms of CPU, so the order a state ran in is not what the table
+measures:
 
-| State | p50 per job | p95 per job | Client CPU per job | QPM CPU per job |
-| --- | --- | --- | --- | --- |
-| Off (`QFW_TELEMETRY` unset): every call site a boolean test | 10.84 ms | 12.02 ms | 7.42 ms | 7.20 ms |
-| Metrics on, traces sampled off: the production default | 11.11 ms (+0.27) | 12.59 ms | 7.89 ms (+0.47) | 7.57 ms (+0.37) |
-| Metrics and traces on: a benchmark or a demonstration | 11.17 ms (+0.33) | 12.91 ms | 7.97 ms (+0.54) | 7.70 ms (+0.50) |
+| State | p50 per job | p95 per job | Client CPU per job | QPM CPU per job | Log lines per job |
+| --- | --- | --- | --- | --- | --- |
+| Off (`QFW_TELEMETRY` unset): every call site a boolean test | 10.91 ms | 12.43 ms | 7.51 ms | 7.28 ms | 0 |
+| Metrics on, traces sampled off: the production default | 11.04 ms (+0.13) | 12.29 ms | 7.78 ms (+0.27) | 7.45 ms (+0.17) | 0 |
+| Metrics and traces on | 11.22 ms (+0.31) | 12.91 ms | 7.97 ms (+0.47) | 7.72 ms (+0.43) | 0 |
+| Plus the transport spans (`QFW_TELEMETRY_TRANSPORT=1`) | 11.30 ms (+0.39) | 12.95 ms | 8.09 ms (+0.58) | 7.82 ms (+0.53) | 0 |
+| Plus the logs tier at `error`: a production site with tracing on | 11.40 ms (+0.49) | 13.16 ms | 8.19 ms (+0.69) | 7.97 ms (+0.68) | 0 |
+| Plus the logs tier at `debug`: the cluster overlay as shipped, a job's story under its trace | 11.58 ms (+0.67) | 13.87 ms | 8.31 ms (+0.81) | 8.62 ms (+1.33) | 10 |
+| Plus the logs tier at `all`: DEFw's transport internals too | 12.06 ms (+1.15) | 19.83 ms | 8.37 ms (+0.87) | 9.60 ms (+2.32) | 32 |
 
 On the fastest job the framework can run, the production default adds
-about 0.3 ms of latency (2.5%) and about 0.85 ms of CPU across the two
-processes (6%); full tracing adds about 0.35 ms and 1.05 ms. Against a job
-on a real device, one to four seconds, that is 0.01% to 0.03% of the job:
-the order of magnitude the table above predicted, at three to five times its
-55 to 123 µs, which is what the attributes, the phase spans written after
-the fact and the export work on a busy service cost over the bare call
-sites. Two things the microbenchmarks could not show: bringing the providers
-up costs a client process about 85 ms once, the SDK and exporter imports,
-and nothing with telemetry off; and metrics-only and full tracing differ by
-little (0.06 ms of latency, 0.13 ms of QPM CPU per job), because a sampled-out
-span still runs its call site, so turning traces off buys little on the job
-path and the metrics tier is the one to keep on.
+about 0.13 ms of latency (1.2%) and about 0.45 ms of CPU across the two
+processes (3%); full tracing about 0.3 ms and 0.9 ms; the transport spans
+another 0.08 ms and 0.2 ms. Against a job on a real device, one to four
+seconds, all of that is under 0.05% of the job: the order of magnitude the
+table above predicted, at three to five times its 55 to 123 µs, which is
+what the attributes, the phase spans written after the fact and the export
+work on a busy service cost over the bare call sites. Two things the
+microbenchmarks could not show: bringing the providers up costs a client
+process about 85 ms once, the SDK and exporter imports, and nothing with
+telemetry off; and metrics-only and full tracing differ by little (0.18 ms
+of latency, 0.27 ms of QPM CPU per job), because a sampled-out span still
+runs its call site, so turning traces off buys little on the job path and
+the metrics tier is the one to keep on.
+
+The logs tier is the first signal whose cost follows what a process logs
+rather than what a job does. At `error` nothing leaves on this workload and
+the tier costs about 0.1 ms over the state before it, at the edge of what
+six repetitions resolve: the handler sits on the root logger and compares a
+level with every record the process writes. At `debug` the fake IQM job
+leaves ten lines, eight from the QPM and two from the client, and the QPM
+pays 0.8 ms of CPU for them, about 80 µs a line: the record is formatted,
+stamped with the span context, batched and exported. At `all` it is 32
+lines and 2.3 ms of QPM CPU, and the p95 jumps from 14 to 20 ms, the batch
+exporter's flushes competing with the job for the interpreter. The tier
+also exports what a plane writes between jobs: on the reference cluster the
+site services' once-a-second status polls put about 16 lines a second into
+Loki at `debug`, two per QPM per poll, whatever the job rate, which is some
+200 MB a day on an idle plane.
 
 **The budget.** On this workload, the production default may cost up to
-0.5 ms of p50 latency and 1.5 ms of combined CPU per job over telemetry off,
-and full tracing up to 0.6 ms and 1.8 ms. A change to the instrumentation
-that goes past that needs a reason rather than a re-argument. The harness is
-`telemetry/overhead-budget.sh` in the QFw-SLURM-Cluster repository; it
-prints this table for the tree it is run against.
+0.5 ms of p50 latency and 1.5 ms of combined CPU per job over telemetry
+off; full tracing with the transport spans up to 0.6 ms and 1.8 ms; and the
+overlay as shipped, with the logs tier at `debug`, up to 1 ms and 3 ms. The
+`all` tier is for a diagnosis, not a budget. A change to the instrumentation
+that goes past these needs a reason rather than a re-argument. The harness
+is `telemetry/overhead-budget.sh` in the QFw-SLURM-Cluster repository; it
+prints this table for the tree it is run against, and `--states` runs the
+states in another order to check that the order is not what it measured.
 
 Means are not in the table because each run's first job carries the
 backend's construction and connection, five to six seconds, and dominates
-them. p50 and CPU per job are the statistics to compare.
+them. p50 and CPU per job are the statistics to compare. The first
+measurement, on 2026-10-08 with the image of 2026-10-07 and the first three
+states only, gave +0.27 and +0.33 ms of p50 and +0.85 and +1.05 ms of CPU
+for the production default and full tracing; the differences to this table
+are within the spread of the repetitions.
 
 #### Measured in the target environment, October 2026: the footprint
 
@@ -520,8 +552,9 @@ On disk, inside the cluster image:
 | QFw, installed | 8 MB | |
 | OpenTelemetry SDK and OTLP exporter | 5 MB | The one Python dependency this design added |
 
-The collector, Prometheus, Tempo and Grafana images are another 2.1 GB,
-pulled separately and only where the dashboards run.
+The collector, Prometheus, Tempo, Loki and Grafana images are another
+2.3 GB (Loki 145 MB of it), pulled separately and only where the
+dashboards run.
 
 In code, QFw is 52,000 lines without DEFw. Since `v0.1.0-rc.1` (2026-09-10)
 it gained 12,000 lines in 80 commits, but 45% of that is mock tests; the
@@ -534,7 +567,8 @@ Running:
 | What | Measured |
 | --- | --- |
 | The 24 cluster containers together | 1.65 GB resident |
-| The four telemetry containers together | 0.44 GB resident: Grafana 264 MB, Tempo 67 MB, Prometheus 62 MB, the collector 50 MB; under 4% of one core between jobs |
+| The four telemetry containers on a fresh stack (2026-10-08, before Loki) | 0.44 GB resident: Grafana 264 MB, Tempo 67 MB, Prometheus 62 MB, the collector 50 MB; under 4% of one core between jobs |
+| The five telemetry containers after two days of demonstration data (2026-10-10) | 1.2 GB resident: Grafana 470 MB, Tempo 270 MB, Loki 240 MB, the collector 180 MB, Prometheus 90 MB; each under 3% of one core between jobs |
 | A v1 QPM process (`defwp`) | 125 to 250 MB resident, 11 threads |
 | A v2 Margo QPM process | 120 to 140 MB resident, 20 threads |
 | The SDK in a client process, `otlp` profile on | +29 MB resident and +0.3 s at start: 6 MB and 0.06 s for the imports, 23 MB and 0.25 s for `configure()`, on a bind-mounted venv |
@@ -545,13 +579,19 @@ the budget above; with the profile off the SDK is never imported and the
 cost is zero.
 
 In storage, after 1,830 jobs in twelve hours with full tracing, Prometheus
-held 45 MB and Tempo 5 MB, so a day of demonstration stays under 100 MB.
-Grafana's volume is 442 MB, of which 424 MB is the plugin directory it
-unpacks on first start.
+held 45 MB and Tempo 5 MB; with the transport spans a trace is about 4 KB,
+so the 12,600 jobs of the 2026-10-10 measurement took Tempo to 43 MB. Loki
+held 22 MB after 184,000 lines, about 120 bytes a line after compaction: a
+megabyte per thousand jobs at the `debug` tier, and on the reference
+cluster some 200 MB a day from the plane's status polls whatever the job
+rate, which is what sets Loki's size over its 14-day retention. A day of
+demonstration stays under half a gigabyte. Grafana's volume is 442 MB, of
+which 424 MB is the plugin directory it unpacks on first start.
 
 What it means for a site: QFw with the Margo path and the exporter is under
-20 MB over what the site already had, and the dashboards are four optional
-containers, half a gigabyte of memory and well under one core. The weight of
+20 MB over what the site already had, and the dashboards are five optional
+containers, half a gigabyte of memory on a fresh stack and about a gigabyte
+once they hold a few days of data, and well under one core. The weight of
 the image is the build toolchains for MQT and QRMI, which a packaged release
 would not carry.
 
