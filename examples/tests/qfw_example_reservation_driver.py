@@ -23,7 +23,7 @@ def normalize_reservation_id(value):
 	return value
 
 
-def resolve_qpm(provider, timeout, service_id=None):
+def resolve_qpm(provider, timeout, service_id=None, target_device=None):
 	selection = qpm_selection_for_provider(provider, default_provider=provider)
 	dirsvc = defw_get_directory_service()
 	resolver = QPMResolver.from_environment(dirsvc=dirsvc)
@@ -31,7 +31,7 @@ def resolve_qpm(provider, timeout, service_id=None):
 		binding = resolver.connect_reserved_managed(
 			service_id, 1, timeout=timeout, binding_name="admission")
 		return binding.resolved, binding.client
-	resolved = resolver.resolve(
+	request = dict(
 		service_type="qfw.qpm",
 		binding_name="admission",
 		qpm_type=selection["qpm_type"],
@@ -39,6 +39,12 @@ def resolve_qpm(provider, timeout, service_id=None):
 		provider=selection["provider"],
 		timeout=timeout,
 	)
+	if target_device:
+		# A provider can serve several devices from several QPMs on a site
+		# plane (the shim serves the IQM, IBM and AWS devices); the device
+		# the job asked for is what tells them apart.
+		request["selector_resource"] = target_device
+	resolved = resolver.resolve(**request)
 	lifecycle_binding = resolver.managed_binding(resolved)
 	return resolved, lifecycle_binding.api(
 		"admission", expected_runtime_id=resolved.runtime_id)
@@ -75,7 +81,8 @@ def json_object(value, label):
 
 
 def reserve(args):
-	resolved, qpm = resolve_qpm(args.backend, args.timeout)
+	resolved, qpm = resolve_qpm(
+		args.backend, args.timeout, target_device=args.target_device)
 	scheduler_reservations = parse_qfw_reservations(required=False)
 	if scheduler_reservations:
 		reservation = select_qpm_reservation(
