@@ -507,10 +507,12 @@ pays 0.8 ms of CPU for them, about 80 µs a line: the record is formatted,
 stamped with the span context, batched and exported. At `all` it is 32
 lines and 2.3 ms of QPM CPU, and the p95 jumps from 14 to 20 ms, the batch
 exporter's flushes competing with the job for the interpreter. The tier
-also exports what a plane writes between jobs: on the reference cluster the
-site services' once-a-second status polls put about 16 lines a second into
-Loki at `debug`, two per QPM per poll, whatever the job rate, which is some
-200 MB a day on an idle plane.
+also exports what a plane writes between jobs, so it is worth knowing that
+an idle plane writes nothing: when this was measured the QPM's
+registration monitor still queried every service once a second, which put
+2 KB a second into each QPM's own log and, at `debug`, the same again into
+Loki; that was a bug in the monitor's order of checks, fixed in October
+2026, not a cost of the tier.
 
 **The budget.** On this workload, the production default may cost up to
 0.5 ms of p50 latency and 1.5 ms of combined CPU per job over telemetry
@@ -582,10 +584,10 @@ In storage, after 1,830 jobs in twelve hours with full tracing, Prometheus
 held 45 MB and Tempo 5 MB; with the transport spans a trace is about 4 KB,
 so the 12,600 jobs of the 2026-10-10 measurement took Tempo to 43 MB. Loki
 held 22 MB after 184,000 lines, about 120 bytes a line after compaction: a
-megabyte per thousand jobs at the `debug` tier, and on the reference
-cluster some 200 MB a day from the plane's status polls whatever the job
-rate, which is what sets Loki's size over its 14-day retention. A day of
-demonstration stays under half a gigabyte. Grafana's volume is 442 MB, of
+megabyte per thousand jobs at the `debug` tier, and nothing between jobs
+once the registration monitor's query was fixed, so over its 14-day
+retention Loki's size follows the jobs. A day of demonstration stays under
+half a gigabyte. Grafana's volume is 442 MB, of
 which 424 MB is the plugin directory it unpacks on first start.
 
 What it means for a site: QFw with the Margo path and the exporter is under
