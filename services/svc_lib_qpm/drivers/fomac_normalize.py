@@ -333,7 +333,12 @@ def _operation_loci_sites(op):
 			arity = op.qubits_num()
 		except AttributeError:
 			arity = 1
-		if not arity or arity < 1 or len(sites) % arity:
+		except Exception:
+			return [[]]
+		# Unknown arity cannot decode placements; keep only global metadata.
+		if arity is None or arity == 0:
+			return [[]]
+		if arity < 1 or len(sites) % arity:
 			raise ValueError("QDMI operation has incomplete or unknown site tuples")
 		return [list(sites[i:i + arity]) for i in range(0, len(sites), arity)]
 	return [[]]

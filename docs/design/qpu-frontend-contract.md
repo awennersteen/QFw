@@ -310,7 +310,7 @@ The execution path is transitional with MQT Core 4.0, `iqm-qdmi` 1.4 and
 `amazon-braket-qdmi` 1.2. IQM retains its named-qubit conversion. Braket retains
 its broader `supportedOperations` vocabulary and count remapping, including
 multiple classical destinations and last-write semantics for terminal
-measurements. Unbound parameters, unsupported reset and gates after measurement
+measurements. Unbound parameters, unsupported reset and gates on measured qubits
 fail before a Braket task is submitted. Native `submit_job` keeps per-resource
 S3 settings; QFw polls instead of using the adapter's unbounded result wait.
 

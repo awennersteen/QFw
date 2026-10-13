@@ -36,10 +36,18 @@ def test_operation_loci_keep_ordered_three_qubit_tuples():
 		["QB1", "QB2", "QB3"], ["QB3", "QB2", "QB1"]]
 
 
-def test_operation_loci_reject_incomplete_tuples():
-	op = types.SimpleNamespace(sites=lambda: [object()], qubits_num=lambda: 3)
-	with pytest.raises(ValueError, match="incomplete or unknown site tuples"):
-		fomac_normalize._operation_loci(op)
+@pytest.mark.parametrize("arity", [None, 0])
+def test_unknown_arity_does_not_invent_site_tuples(arity):
+	op = types.SimpleNamespace(sites=lambda: [object()], qubits_num=lambda: arity)
+	assert fomac_normalize._operation_loci(op) == []
+
+
+def test_unsupported_arity_does_not_abort_introspection():
+	def qubits_num():
+		raise NotImplementedError
+	op = types.SimpleNamespace(name=lambda: "measure", sites=lambda: [object()], qubits_num=qubits_num)
+	device = types.SimpleNamespace(operations=lambda: [op])
+	assert fomac_normalize._operations(device) == {"measure": []}
 
 
 def test_an_unknown_provider_fails_when_the_driver_is_built():

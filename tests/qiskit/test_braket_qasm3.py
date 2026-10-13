@@ -225,6 +225,24 @@ def test_one_qubit_can_fill_multiple_classical_bits():
 	assert remap_counts({"1": 10}, measurement) == {"101": 10}
 
 
+def test_gates_on_unmeasured_qubits_can_follow_a_measurement():
+	circuit = QuantumCircuit(2, 2)
+	circuit.measure(0, 0)
+	circuit.h(1)
+	circuit.measure(1, 1)
+	program, _measurement = to_braket_qasm3(circuit, _backend(BROAD))
+	assert "h q[1];" in program
+
+
+def test_custom_gate_names_are_normalized_to_the_device_spelling():
+	from qiskit.circuit import Gate
+	circuit = QuantumCircuit(1, 1)
+	circuit.append(Gate("GPI", 1, [0.5]), [0])
+	circuit.measure(0, 0)
+	program, _measurement = to_braket_qasm3(circuit, _backend({"gpi"}))
+	assert "gpi(0.5) q[0];" in program
+
+
 def test_the_last_classical_write_wins_after_a_repeated_qubit():
 	measurement = {"num_clbits": 2, "map": [(0, 0), (1, 0), (0, 1)]}
 	assert remap_counts({"01": 10}, measurement) == {"10": 10}

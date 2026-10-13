@@ -78,8 +78,12 @@ def accepted_operation_names(device):
 
 def to_braket_qasm3(circuit, backend):
 	"""Return Braket OpenQASM 3 and the legacy counts' measurement map."""
-	from qiskit.converters import circuit_to_dag, dag_to_circuit
-	from mqt.core.qdmi import ProgramFormat
+	try:
+		from qiskit.converters import circuit_to_dag, dag_to_circuit
+		from mqt.core.qdmi import ProgramFormat
+	except ImportError as exc:
+		raise DEFwExecutionError(
+			f"Braket serialization needs the QDMI package set: {exc}") from exc
 
 	accepted = accepted_operation_names(backend.device)
 
@@ -107,12 +111,12 @@ def to_braket_qasm3(circuit, backend):
 	# recover an earlier measurement followed by a gate. Remove this guard
 	# with the library's program-output release, after checking its subset.
 	# https://github.com/Munich-Quantum-Software/amazon-braket-qdmi-device/pull/242
-	measuring = False
+	measured_qubits = set()
 	for instruction in circuit.data:
 		name = instruction.operation.name.lower()
 		if name == "measure":
-			measuring = True
-		elif measuring and name != "barrier":
+			measured_qubits.update(instruction.qubits)
+		elif name != "barrier" and measured_qubits.intersection(instruction.qubits):
 			raise DEFwExecutionError(
 				"Braket's legacy QDMI results require terminal measurements")
 
@@ -135,7 +139,7 @@ def to_braket_qasm3(circuit, backend):
 				program_circuit.find_bit(instruction.clbits[0]).index))
 		elif name not in DIRECTIVES:
 			new_name = braket_name(name)
-			if new_name != name:
+			if new_name != instruction.operation.name:
 				program_circuit.data[index] = instruction.replace(
 					operation=instruction.operation.copy(name=new_name))
 	native = {op.name().lower() for op in _operations(backend.device)}
