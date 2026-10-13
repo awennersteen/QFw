@@ -142,7 +142,8 @@ def to_braket_qasm3(circuit, backend):
 			if new_name != instruction.operation.name:
 				program_circuit.data[index] = instruction.replace(
 					operation=instruction.operation.copy(name=new_name))
-	native = {op.name().lower() for op in _operations(backend.device)}
+	native = {name.lower() for op in _operations(backend.device)
+		if (name := _operation_name(op))}
 	used = {inst.operation.name for inst in program_circuit.data} - DIRECTIVES
 	if used <= native:
 		# MQT Core's serialization hook suffices for the native vocabulary.

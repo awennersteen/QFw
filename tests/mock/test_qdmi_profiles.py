@@ -50,6 +50,18 @@ def test_unsupported_arity_does_not_abort_introspection():
 	assert fomac_normalize._operations(device) == {"measure": []}
 
 
+@pytest.mark.parametrize("variable", ["IQM_TOKENS_FILE", "IQM_QC_ID", "IQM_QC_ALIAS"])
+def test_iqm_rejects_ambient_session_settings(monkeypatch, variable):
+	monkeypatch.setenv(variable, "process-default")
+	opened = []
+	_install_iqm_backend(monkeypatch, opened)
+	with pytest.raises(DEFwExecutionError, match=variable):
+		profile_for({"provider": "iqm"}).open_backend({
+			"base_url": "https://qc.example.org", "token": "user-token",
+			"qc_alias": "reserved-device"})
+	assert opened == []
+
+
 def test_an_unknown_provider_fails_when_the_driver_is_built():
 	with pytest.raises(
 			DEFwExecutionError, match="no profile for provider 'ionq'"):
@@ -642,5 +654,5 @@ def test_topology_and_calibration_share_three_qubit_loci():
 
 def test_incomplete_site_tuples_are_rejected():
 	op = types.SimpleNamespace(qubits_num=lambda: 3, sites=lambda: [0, 1])
-	with pytest.raises(ValueError, match="incomplete"):
+	with pytest.raises(DEFwExecutionError, match="incomplete"):
 		fomac_normalize._operation_loci(op)

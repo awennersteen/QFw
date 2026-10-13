@@ -192,6 +192,11 @@ class IqmQdmiProfile(QdmiProfile):
 		}
 
 	def open_backend(self, access):
+		# The released adapter also reads process-wide IQM session defaults.
+		for variable in ("IQM_TOKENS_FILE", "IQM_QC_ID", "IQM_QC_ALIAS"):
+			if os.environ.get(variable):
+				raise DEFwExecutionError(
+					f"Unset {variable}; QFw binds IQM access per reservation")
 		from iqm.qdmi.qiskit import IQMBackend
 		return IQMBackend(
 			base_url=access["base_url"], token=access["token"],

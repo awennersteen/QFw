@@ -306,6 +306,10 @@ wait on cancellation, and translates FoMaC introspection into qhw records.
 The tested package set is in `setup/qdmi-requirements.txt`; both cluster install
 paths consume that file.
 
+IQM sessions use QFw's reservation-bound access. Unset `IQM_TOKENS_FILE`,
+`IQM_QC_ID` and `IQM_QC_ALIAS` in the service process; the released adapter
+otherwise combines those defaults with explicit session parameters.
+
 The execution path is transitional with MQT Core 4.0, `iqm-qdmi` 1.4 and
 `amazon-braket-qdmi` 1.2. IQM retains its named-qubit conversion. Braket retains
 its broader `supportedOperations` vocabulary and count remapping, including

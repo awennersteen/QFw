@@ -17,6 +17,8 @@
 # defers qhw-iqm) so the driver imports and the Frontend routes even where
 # qhw-data is not installed; only a real introspection call needs it.
 
+from defw_exception import DEFwExecutionError
+
 _COUPLING_SOURCE = "qdmi.fomac.coupling_map"
 
 # QDMI's custom device-property slots are vendor-defined: the neutral model
@@ -339,7 +341,7 @@ def _operation_loci_sites(op):
 		if arity is None or arity == 0:
 			return [[]]
 		if arity < 1 or len(sites) % arity:
-			raise ValueError("QDMI operation has incomplete or unknown site tuples")
+			raise DEFwExecutionError("QDMI operation has incomplete or unknown site tuples")
 		return [list(sites[i:i + arity]) for i in range(0, len(sites), arity)]
 	return [[]]
 
