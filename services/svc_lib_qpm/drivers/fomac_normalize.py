@@ -17,6 +17,8 @@
 # defers qhw-iqm) so the driver imports and the Frontend routes even where
 # qhw-data is not installed; only a real introspection call needs it.
 
+from math import isfinite
+
 from defw_exception import DEFwExecutionError
 
 _COUPLING_SOURCE = "qdmi.fomac.coupling_map"
@@ -68,28 +70,30 @@ def extract_calibration(device, calibration_set_slot=_CALIBRATION_SET_ID_SLOT):
 	  calibration_set_id: str | None -- provider calibration set identity
 
 	QDMI exposes coherence (QDMI_SITE_PROPERTY_T1/T2) per site and fidelity /
-	duration per operation locus; this reads them vendor-neutrally. Like
-	extract_topology, this is the only calibration function that touches the
-	live FoMaC Device -- to_calibration_record is pure over the returned dict.
+	duration per operation locus. Times include the device's duration scale
+	factor. Like extract_topology, this is the only calibration function that
+	touches the live FoMaC Device -- to_calibration_record is pure over the
+	returned dict.
 
 	`calibration_set_slot` names the device CUSTOM slot the provider keeps
 	its calibration set id in (see _CALIBRATION_SET_ID_SLOT); None reads none.
 	"""
 	sites = list(device.regular_sites() or [])
+	duration_scale = _duration_scale_factor(device)
 	qubit_metrics = []
 	for site in sites:
 		entry = {"qubit": _site_label(site)}
 		t1 = _site_metric(site, "t1")
 		if t1 is not None:
-			entry["t1"] = t1
+			entry["t1"] = t1 * duration_scale
 		t2 = _site_metric(site, "t2")
 		if t2 is not None:
-			entry["t2"] = t2
+			entry["t2"] = t2 * duration_scale
 		qubit_metrics.append(entry)
 	return {
 		"qubits": [_site_label(site) for site in sites],
 		"qubit_metrics": qubit_metrics,
-		"gate_metrics": _operation_metrics(device),
+		"gate_metrics": _operation_metrics(device, duration_scale),
 		"duration_unit": _device_duration_unit(device),
 		"calibration_set_id": _calibration_set_id(
 			device, calibration_set_slot),
@@ -281,7 +285,18 @@ def _site_metric(site, attr):
 		return None
 
 
-def _operation_metrics(device):
+def _duration_scale_factor(device):
+	getter = getattr(device, "duration_scale_factor", None)
+	scale = getter() if getter is not None else None
+	if scale is None:
+		return 1.0
+	if not isfinite(scale) or scale <= 0:
+		raise DEFwExecutionError(
+			f"QDMI duration scale factor must be positive and finite, got {scale!r}")
+	return scale
+
+
+def _operation_metrics(device, duration_scale):
 	# Per-operation-locus fidelity/duration. Mirrors _operations() but keeps the
 	# Site objects so the metric accessors can be queried per locus. Only loci
 	# that actually report a metric are recorded.
@@ -305,7 +320,7 @@ def _operation_metrics(device):
 				entry["fidelity"] = fidelity
 			duration = _op_metric(op, "duration", locus_sites)
 			if duration is not None:
-				entry["duration"] = duration
+				entry["duration"] = duration * duration_scale
 			if "fidelity" in entry or "duration" in entry:
 				metrics.append(entry)
 	return sorted(metrics,

@@ -607,6 +607,44 @@ def test_no_slot_means_nothing_is_queried(monkeypatch):
 	assert device.queries == []
 
 
+@pytest.mark.parametrize("scale, expected_scale, exception", [
+	(0.001, 0.001, None), (1.0, 1.0, None), (None, 1.0, None),
+	("missing", 1.0, None), ("failure", None, RuntimeError),
+	(0.0, None, DEFwExecutionError), (-1.0, None, DEFwExecutionError),
+	(float("inf"), None, DEFwExecutionError), (float("nan"), None, DEFwExecutionError)])
+def test_calibration_times_use_the_device_duration_scale(scale, expected_scale, exception):
+	site = types.SimpleNamespace(
+		name=lambda: "0", t1=lambda: 10000, t2=lambda: 8000)
+	unavailable = types.SimpleNamespace(name=lambda: "1", t1=lambda: None)
+	op = types.SimpleNamespace(
+		name=lambda: "x", qubits_num=lambda: 1, sites=lambda: [site],
+		fidelity=lambda **kwargs: 0.99, duration=lambda **kwargs: 40)
+	device = types.SimpleNamespace(
+		regular_sites=lambda: [site, unavailable], operations=lambda: [op],
+		duration_unit=lambda: "us")
+
+	def duration_scale_factor():
+		if scale == "failure":
+			raise RuntimeError("query failed")
+		return scale
+
+	if scale != "missing":
+		device.duration_scale_factor = duration_scale_factor
+	if exception is not None:
+		with pytest.raises(exception):
+			fomac_normalize.extract_calibration(device, calibration_set_slot=None)
+		return
+
+	cal = fomac_normalize.extract_calibration(device, calibration_set_slot=None)
+	assert cal["qubit_metrics"] == [
+		{"qubit": "0", "t1": 10000 * expected_scale, "t2": 8000 * expected_scale},
+		{"qubit": "1"}]
+	assert cal["gate_metrics"] == [{
+		"operation": "x", "locus": ["0"], "fidelity": 0.99,
+		"duration": 40 * expected_scale}]
+	assert cal["duration_unit"] == "us"
+
+
 # --- svc_qpm tags each circuit with the resource's provider -----------------
 
 def test_the_shim_qpm_tags_circuits_with_the_provider(monkeypatch):
@@ -664,7 +702,7 @@ def test_topology_and_calibration_share_three_qubit_loci():
 		sites=lambda: sites, fidelity=fidelity)
 	device = types.SimpleNamespace(operations=lambda: [op])
 	assert fomac_normalize._operations(device) == {"ccnot": [["0", "1", "2"]]}
-	assert fomac_normalize._operation_metrics(device) == [{
+	assert fomac_normalize._operation_metrics(device, 1.0) == [{
 		"operation": "ccnot", "locus": ["0", "1", "2"], "fidelity": 0.9}]
 	assert queried == [("0", "1", "2")]
 
