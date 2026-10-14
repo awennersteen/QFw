@@ -1,3 +1,6 @@
+import types
+
+
 class FakeQPM:
 	def __init__(self, cids=None, async_error=None, test_error=None):
 		self.cids = list(cids or ["cid-1"])
@@ -262,3 +265,22 @@ def make_result_event(cid, counts=None, *, offset=0.0, rc=0, result=None):
 			"result": result,
 		}
 	)
+
+
+def stub_qdmi_session(driver, device=None):
+	"""Stand in for the QDMI driver's live session, opening nothing.
+
+	A test here only wants the driver to stop short of a real session, not
+	to track which private accessor run_circuit reaches that session
+	through. Stubbing one accessor by name has already proved brittle, so
+	set both the one in use (_device) and the one the packaged-adapter work
+	moves to (_backend, whose .device this returns). The driver takes
+	whichever it asks for and the unused one costs nothing. Returns the
+	device, so a caller can assert against the object the driver was handed.
+	"""
+	if device is None:
+		device = object()
+	driver._device = lambda credential=None: device
+	driver._backend = lambda credential=None: types.SimpleNamespace(
+		device=device)
+	return device
