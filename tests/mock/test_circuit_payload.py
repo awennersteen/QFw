@@ -303,6 +303,7 @@ def test_the_qrmi_driver_transcodes_the_declared_circuit(monkeypatch):
 def test_the_qdmi_driver_transcodes_the_declared_circuit(monkeypatch):
 	import util.iqm_transcode as iqm_transcode
 	from svc_lib_qpm.drivers import qdmi_driver
+	from tests.mock.fakes import stub_qdmi_session
 	seen = _capture_transcoder(monkeypatch, iqm_transcode)
 	monkeypatch.setattr(
 		circuit_payload, "load_qpy", lambda data: ("loaded", data))
@@ -310,7 +311,7 @@ def test_the_qdmi_driver_transcodes_the_declared_circuit(monkeypatch):
 		qdmi_driver.fomac_normalize, "extract_topology",
 		lambda device: {"qubits": ["QB1"]})
 	driver = qdmi_driver.QdmiDriver({"provider": "iqm"})
-	driver._device = lambda credential=None: object()
+	stub_qdmi_session(driver)
 	driver._ids = lambda: ("iqm", "device-a")
 
 	for info in (_qpy_info(b"\x08"), {"qasm": "OPENQASM 2.0;"}):

@@ -24,6 +24,7 @@ from defw_exception import DEFwExecutionError  # noqa: E402
 from svc_lib_qpm import svc_qrc  # noqa: E402
 from svc_lib_qpm.drivers import qdmi_driver  # noqa: E402
 from svc_lib_qpm.drivers.qrmi_driver import QrmiDriver  # noqa: E402
+from tests.mock.fakes import stub_qdmi_session  # noqa: E402
 
 
 def _cancelled():
@@ -211,7 +212,7 @@ def test_a_cancel_before_submission_submits_no_qdmi_job(monkeypatch):
 	device = types.SimpleNamespace(
 		submit_job=lambda *args: submitted.append(args))
 	driver = _qdmi_driver()
-	driver._device = lambda credential=None: device
+	stub_qdmi_session(driver, device)
 	driver._ids = lambda: ("iqm", "device-a")
 	driver._serialize_program = lambda iqm_circuit: "{}"
 	circuit = types.SimpleNamespace(
