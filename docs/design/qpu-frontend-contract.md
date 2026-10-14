@@ -282,12 +282,22 @@ sent, QPY or OpenQASM 2, becomes Braket's self-contained OpenQASM 3 in
 (Braket spells `cx` as `cnot`, `sx` as `v`, and so on). A gate the device does
 not accept is decomposed into ones it does, with no coupling map, because
 Braket compiles and routes a non-verbatim program itself; anything still
-unexpressible fails before a task is created. Out: the device library keys
-its histogram by measured qubit, highest first, while a Qiskit result is
-keyed by classical bit, so the transcode records the measurement map and the
-counts are rebuilt in classical-bit order before `qhw-result-v1` is built.
-That is the "shape, not library" rule again: the same FoMaC `Device` and
-`Job` objects, a different vendor-defined content.
+unexpressible fails before a task is created. Out: Braket's backends do not
+agree on the order of a result's columns (SV1 orders them by qubit index,
+Rigetti by classical register), and the device library keys its histogram
+from the columns as they come, highest leftmost, without reading
+`measuredQubits`. So the transcode rewrites the measurements as one block at
+the end of the program, `c[k] = measure q[i_k]` in ascending qubit order into
+a register of just the measured qubits, which makes bit order, statement
+order and qubit order one and the same: every backend returns the same rows,
+and the key reads highest measured qubit leftmost. The transcode records the
+map from those qubits to the circuit's classical bits, and the counts are
+rebuilt in classical-bit order before `qhw-result-v1` is built (verified on
+SV1 and on Rigetti Cepheus-1-108Q with a circuit whose bits are permuted).
+Measurements are terminal, as Braket requires; a gate on a measured qubit is
+refused before a task is created. That is the "shape, not library" rule
+again: the same FoMaC `Device` and `Job` objects, a different vendor-defined
+content.
 
 This keeps normalization decoupled from the libraries and lets the shim absorb
 both "thick" libraries (raw vendor data) and "thin"/neutral ones (a standard
@@ -506,8 +516,10 @@ credential chain, so the identity is the service process's own, and QFw's
 holding a key. The program is Braket's OpenQASM 3 (Section 8), a job's S3
 results URI rides in job `CUSTOM1`, and the device's `CUSTOM1` holds Braket's
 broader `supportedOperations` set rather than a calibration set id, which
-Braket does not publish. The counts come back keyed by measured qubit and
-are rebuilt in classical-bit order. Because every task is billed, a device
+Braket does not publish. The program measures in ascending qubit order into
+a register of the measured qubits, so every Braket backend returns the same
+rows (Section 8), and the counts are rebuilt in classical-bit order. Because
+every task is billed, a device
 can carry `max-shots`, which the profile refuses above before a task exists,
 and `job-timeout-seconds` sets how long a queued QPU task is waited for.
 
