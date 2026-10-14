@@ -7,6 +7,8 @@ import types
 
 import pytest
 
+from tests.mock.fakes import stub_qdmi_session
+
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 SERVICES = str(REPO_ROOT / "services")
@@ -121,6 +123,21 @@ def test_the_iqm_profile_names_the_missing_credential(monkeypatch):
 
 	with pytest.raises(DEFwExecutionError, match="API token"):
 		QdmiDriver({"provider": "iqm"})._access()
+
+
+@pytest.mark.parametrize("credential", [None, {"reservation_id": 7}])
+def test_a_warm_session_does_not_resolve_access_again(monkeypatch, credential):
+	monkeypatch.setenv("QFW_QC_URL", "https://qc.example.org")
+	monkeypatch.setenv("QFW_API_KEY", "user-token")
+	opened = []
+	_install_iqm_backend(monkeypatch, opened)
+	driver = QdmiDriver({"provider": "iqm"})
+	device = driver._device(credential)
+	monkeypatch.setattr(driver._profile, "access",
+		lambda credential=None: pytest.fail("warm session resolved access"))
+
+	assert driver._device(credential) is device
+	assert len(opened) == 1
 
 
 # --- the reservation's credential, not the service's ------------------------
@@ -425,8 +442,7 @@ def _running_driver(monkeypatch, counts, records, submitted):
 		return _Job(counts)
 
 	driver = QdmiDriver({"provider": "iqm", "id": "ornl-iqm-20q"})
-	driver._backend = lambda credential=None: types.SimpleNamespace(
-		device=types.SimpleNamespace(submit_job=submit_job))
+	stub_qdmi_session(driver, types.SimpleNamespace(submit_job=submit_job))
 	driver._serialize_program = lambda iqm_circuit: "{}"
 	return driver
 

@@ -118,11 +118,14 @@ class QdmiDriver(BaseDriver):
 		# The provider adapter owns registration and session parameters.
 		# Keep one adapter per reservation, never one shared user session.
 		cache_key = self._credential_cache_key(credential)
-		access = self._access(credential)
+		backend = self._backends.get(cache_key)
+		if backend is not None:
+			return backend
 		with self._backends_lock:
 			backend = self._backends.get(cache_key)
 			if backend is not None:
 				return backend
+			access = self._access(credential)
 			try:
 				backend = self._profile.open_backend(access)
 			except ImportError as exc:
