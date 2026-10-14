@@ -87,10 +87,8 @@ def to_braket_qasm3(circuit, backend):
 
 	accepted = accepted_operation_names(backend.device)
 
-	# Temporary: Braket's QPU Target contains only native gates, while its
-	# non-verbatim compiler also accepts supportedOperations (CUSTOM1).
-	# Reuse the adapter's aliases and serializer, retaining this broader
-	# vocabulary until the adapter exposes that compilation contract.
+	# Braket's Target contains only native gates; its non-verbatim compiler
+	# also accepts supportedOperations (CUSTOM1).
 	# https://github.com/Munich-Quantum-Software/amazon-braket-qdmi-device/issues/207
 	def braket_name(name):
 		name = name.lower()
@@ -107,9 +105,8 @@ def to_braket_qasm3(circuit, backend):
 
 	if circuit.parameters:
 		raise DEFwExecutionError("Braket circuits must have bound parameters")
-	# The legacy histogram carries final qubit values only. It cannot
-	# recover an earlier measurement followed by a gate. Remove this guard
-	# with the library's program-output release, after checking its subset.
+	# The released driver reports final qubit values, so it cannot recover
+	# an earlier measurement followed by a gate.
 	# https://github.com/Munich-Quantum-Software/amazon-braket-qdmi-device/pull/242
 	measured_qubits = set()
 	for instruction in circuit.data:
@@ -150,9 +147,8 @@ def to_braket_qasm3(circuit, backend):
 		program, _fmt = backend._serialize_circuit(
 			program_circuit, [ProgramFormat.QASM3])
 	else:
-		# Temporary: the 1.2 adapter's DAG round trip resets standard gate
-		# names and re-aliases them against only native operations. Serialize
-		# the broader vocabulary directly until #207's contract is supported.
+		# The adapter re-aliases against native operations only; preserve the
+		# broader compiler vocabulary here until #207 is resolved.
 		from qiskit import qasm3
 		from qiskit.circuit import QuantumRegister
 		if program_circuit.qubits and not program_circuit.qregs:
@@ -173,9 +169,8 @@ def remap_counts(counts, measurement):
 	so rebuild each key from the measurement map recorded at transcode time.
 	An unmeasured bit reads 0, as it does in Qiskit.
 	"""
-	# Temporary for amazon-braket-qdmi 1.2. Delete with its program-output
-	# release; applying this map to already-normalized counts would corrupt
-	# permuted outputs. Update setup/qdmi-requirements.txt in the same change.
+	# Remove this with the provider's program-output implementation; applying
+	# it to classical-ordered counts would corrupt permuted outputs.
 	# https://github.com/Munich-Quantum-Software/amazon-braket-qdmi-device/pull/242
 	if not counts or not isinstance(measurement, dict):
 		return counts

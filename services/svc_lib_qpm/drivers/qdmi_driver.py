@@ -225,11 +225,8 @@ class QdmiDriver(BaseDriver):
 
 		timing = {}
 		start = time.monotonic()
-		# Temporary: native submit_job preserves provider job parameters and
-		# lets QFw remap legacy counts. Switch to backend.run when the Core
-		# and provider output-layout/job-parameter releases are available.
-		# https://github.com/munich-quantum-toolkit/core/pull/2626
-		# https://github.com/Munich-Quantum-Software/amazon-braket-qdmi-device/pull/242
+		# Native submission preserves the resource's Braket S3 destination;
+		# the released Braket backend has no corresponding run option.
 		with instrumentation.backend_phase("submit"):
 			try:
 				job = device.submit_job(

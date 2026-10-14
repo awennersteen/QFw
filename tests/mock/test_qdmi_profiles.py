@@ -50,7 +50,8 @@ def test_unsupported_arity_does_not_abort_introspection():
 	assert fomac_normalize._operations(device) == {"measure": []}
 
 
-@pytest.mark.parametrize("variable", ["IQM_TOKENS_FILE", "IQM_QC_ID", "IQM_QC_ALIAS"])
+@pytest.mark.parametrize("variable", [
+	"IQM_TOKENS_FILE", "IQM_QC_ID", "IQM_QUANTUM_COMPUTER", "IQM_QC_ALIAS"])
 def test_iqm_rejects_ambient_session_settings(monkeypatch, variable):
 	monkeypatch.setenv(variable, "process-default")
 	opened = []

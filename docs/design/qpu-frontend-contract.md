@@ -307,24 +307,16 @@ The tested package set is in `setup/qdmi-requirements.txt`; both cluster install
 paths consume that file.
 
 IQM sessions use QFw's reservation-bound access. Unset `IQM_TOKENS_FILE`,
-`IQM_QC_ID` and `IQM_QC_ALIAS` in the service process; the released adapter
-otherwise combines those defaults with explicit session parameters.
+`IQM_QC_ID`, `IQM_QUANTUM_COMPUTER` and `IQM_QC_ALIAS` in the service process
+so ambient settings cannot select another credential or device.
 
-The execution path is transitional with MQT Core 4.0, `iqm-qdmi` 1.4 and
-`amazon-braket-qdmi` 1.2. IQM retains its named-qubit conversion. Braket retains
-its broader `supportedOperations` vocabulary and count remapping, including
-multiple classical destinations and last-write semantics for terminal
-measurements. Unbound parameters, unsupported reset and gates on measured qubits
-fail before a Braket task is submitted. Native `submit_job` keeps per-resource
-S3 settings; QFw polls instead of using the adapter's unbounded result wait.
-
-Remove the legacy converters/remapping and use `backend.run` only after the
-coordinated package releases provide the output-layout contract and provider
-job options. Update the pinned package set in the same change so classical
-counts are mapped exactly once. The upstream work is
-[Core #2626](https://github.com/munich-quantum-toolkit/core/pull/2626),
-[Braket #242](https://github.com/Munich-Quantum-Software/amazon-braket-qdmi-device/pull/242)
-and [IQM #276](https://github.com/iqm-finland/QDMI-on-IQM/pull/276).
+IQM retains its named-qubit conversion. Braket uses its broader
+`supportedOperations` vocabulary and maps qubit-ordered counts to classical
+bits once, preserving multiple destinations and final writes for terminal
+measurements. The released provider libraries do not yet implement the
+program-output contract. Unbound parameters, unsupported reset and gates on
+measured qubits fail before a Braket task is submitted. Native `submit_job`
+preserves per-resource S3 settings; QFw owns deadlines and cancellation.
 
 ## 9. The gap map
 
@@ -386,7 +378,7 @@ implementation to evaluate the shim against.
     are imported lazily, so the service constructs and routes before any real
     library call is made.
   - `drivers/qdmi_profiles.py` — QFw resource settings, execution policy,
-    and temporary program/result adaptation for IQM and Braket. The packaged
+    and program/result adaptation for IQM and Braket. The packaged
     provider adapters open sessions through MQT Core; `QdmiDriver` retains
     the QFw job wait and qhw record conversion.
 - **`dev-config/config.yaml`** (resolved via `services/util/device_access.py`)

@@ -193,7 +193,8 @@ class IqmQdmiProfile(QdmiProfile):
 
 	def open_backend(self, access):
 		# The released adapter also reads process-wide IQM session defaults.
-		for variable in ("IQM_TOKENS_FILE", "IQM_QC_ID", "IQM_QC_ALIAS"):
+		for variable in (
+				"IQM_TOKENS_FILE", "IQM_QC_ID", "IQM_QUANTUM_COMPUTER", "IQM_QC_ALIAS"):
 			if os.environ.get(variable):
 				raise DEFwExecutionError(
 					f"Unset {variable}; QFw binds IQM access per reservation")
@@ -280,10 +281,6 @@ class BraketQdmiProfile(QdmiProfile):
 		return program, "QASM3", measurement
 
 	def job_kwargs(self, info):
-		# Temporary: MQT Core 4.0's Backend.run cannot forward these job
-		# parameters. Keep native submission until the coordinated releases
-		# expose the job-parameter hook and Braket's named S3 option.
-		# https://github.com/Munich-Quantum-Software/amazon-braket-qdmi-device/issues/204
 		# OUTPUTS3URI is job CUSTOM1 and RESERVATION_ARN is job CUSTOM3.
 		# Without a URI the library uses the account's standard regional
 		# bucket, which needs STS and bucket-management permissions on first
