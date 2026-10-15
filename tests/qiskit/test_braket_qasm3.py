@@ -71,6 +71,26 @@ def _gate_names(program):
 	return {re.match(r"[a-z_0-9]+", line).group(0) for line in _gate_lines(program)}
 
 
+def _measure_lines(program):
+	return [line.strip() for line in program.splitlines() if "measure" in line]
+
+
+def _library_keys(program, values):
+	# What the device library would make of one ideal shot, for a backend
+	# that orders result columns by qubit index (SV1) and for one that orders
+	# them by classical register (Rigetti). The library reverses each row as
+	# it comes, without reading measuredQubits (DeviceParser.cpp).
+	pairs = [
+		(int(re.search(r"c\[(\d+)\]", line).group(1)),
+			int(re.search(r"q\[(\d+)\]", line).group(1)))
+		for line in _measure_lines(program)]
+	by_qubit = "".join(
+		str(values[qubit]) for _bit, qubit in sorted(pairs, key=lambda p: p[1]))
+	by_register = "".join(
+		str(values[qubit]) for _bit, qubit in sorted(pairs, key=lambda p: p[0]))
+	return by_qubit[::-1], by_register[::-1]
+
+
 def test_a_broad_vocabulary_only_renames():
 	program, measurement = to_braket_qasm3(_ghz(), BROAD)
 
@@ -158,13 +178,83 @@ def test_the_asymmetric_smoke_circuit_remaps_to_classical_bit_order():
 
 	program, measurement = to_braket_qasm3(circuit, BROAD)
 
-	assert "c[0] = measure q[2];" in program
-	assert "c[2] = measure q[0];" in program
+	# The program measures in ascending qubit order into a fresh register,
+	# whatever the circuit's bit assignment, so bit order, statement order
+	# and qubit order coincide. The map carries the circuit's bits.
+	assert _measure_lines(program) == [
+		"c[0] = measure q[0];", "c[1] = measure q[1];", "c[2] = measure q[2];"]
 	# The DAG round trip may reorder independent measurements; the remap
 	# reads the map as a set of (qubit, bit) pairs, so order is immaterial.
 	assert measurement["num_clbits"] == 3
 	assert sorted(measurement["map"]) == [(0, 2), (1, 1), (2, 0)]
+	# Both column orders give the same row for the ideal shot (q0 = 1), the
+	# library keys it "001", and the remap reads that as Qiskit's "100".
+	assert _library_keys(program, {0: 1, 1: 0, 2: 0}) == ("001", "001")
 	assert remap_counts({"001": 10}, measurement) == {"100": 10}
+
+
+def test_the_bit_assignment_does_not_change_the_rows_a_backend_returns():
+	# Measured out of order into a wider register, with idle qubits dropped:
+	# qubit 3 lands in bit 1 and qubit 1 in bit 3. The program keeps only the
+	# two measured qubits, as q[0] (was 1) and q[1] (was 3).
+	circuit = QuantumCircuit(4, 4)
+	circuit.x(3)
+	circuit.measure(3, 1)
+	circuit.measure(1, 3)
+
+	program, measurement = to_braket_qasm3(circuit, BROAD)
+
+	assert "qubit[2] q;" in program
+	assert "bit[2] c;" in program
+	assert _measure_lines(program) == [
+		"c[0] = measure q[0];", "c[1] = measure q[1];"]
+	assert measurement["num_clbits"] == 4
+	assert sorted(measurement["map"]) == [(0, 3), (1, 1)]
+	# The ideal shot has q[1] = 1. SV1 and Rigetti return the same row, the
+	# library keys it "10", and that is bit 1 set in a 4-bit register.
+	assert _library_keys(program, {0: 0, 1: 1}) == ("10", "10")
+	assert remap_counts({"10": 10}, measurement) == {"0010": 10}
+
+
+def test_a_qubit_measured_into_two_bits_is_measured_once_and_fills_both():
+	circuit = QuantumCircuit(1, 2)
+	circuit.x(0)
+	circuit.measure(0, 0)
+	circuit.measure(0, 1)
+
+	program, measurement = to_braket_qasm3(circuit, BROAD)
+
+	assert "bit[1] c;" in program
+	assert _measure_lines(program) == ["c[0] = measure q[0];"]
+	assert measurement == {"num_clbits": 2, "map": [(0, 0), (0, 1)]}
+	assert remap_counts({"1": 10}, measurement) == {"11": 10}
+
+
+def test_a_gate_after_a_measurement_is_rejected():
+	# Braket takes terminal measurements only, and the library reports final
+	# qubit values, so an earlier measurement could not be recovered anyway.
+	circuit = QuantumCircuit(2, 2)
+	circuit.measure(0, 0)
+	circuit.x(0)
+	circuit.measure(0, 1)
+
+	with pytest.raises(DEFwExecutionError, match="terminal measurements"):
+		to_braket_qasm3(circuit, BROAD)
+
+
+def test_barriers_and_other_qubits_may_follow_a_measurement():
+	circuit = QuantumCircuit(2, 2)
+	circuit.measure(0, 0)
+	circuit.barrier()
+	circuit.h(1)
+	circuit.measure(1, 1)
+
+	program, measurement = to_braket_qasm3(circuit, BROAD)
+
+	assert "h q[1];" in program
+	assert _measure_lines(program) == [
+		"c[0] = measure q[0];", "c[1] = measure q[1];"]
+	assert sorted(measurement["map"]) == [(0, 0), (1, 1)]
 
 
 def test_the_rename_table_round_trips():

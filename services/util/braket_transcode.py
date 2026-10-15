@@ -107,11 +107,23 @@ def to_braket_qasm3(circuit, accepted):
 	are decomposed into ones it does, with no coupling map, because Braket
 	routes a non-verbatim program on its side. Idle qubits are dropped, since
 	the simulators want contiguous indices.
+
+	The measurements are rewritten as one block at the end of the program,
+	`c[k] = measure q[i_k]` with i_0 < i_1 < ..., into a register of exactly
+	the measured qubits. Braket's backends disagree on how they order the
+	columns of a result (SV1 by qubit index, Rigetti by classical register),
+	and the device library keys its histogram from those columns as they
+	come, highest leftmost, without reading `measuredQubits`. With bit order,
+	statement order and qubit order made one, every backend returns the same
+	rows, and the key reads highest measured qubit leftmost, which is what
+	remap_counts undoes. Braket takes terminal measurements only, so a
+	measured qubit may carry nothing but barriers afterwards.
 	"""
 	accepted = {str(name).lower() for name in accepted}
 	try:
 		from qiskit import qasm3
-		from qiskit.circuit import QuantumRegister
+		from qiskit.circuit import (ClassicalRegister, QuantumCircuit,
+				QuantumRegister)
 		from qiskit.converters import circuit_to_dag, dag_to_circuit
 	except Exception as exc:
 		raise DEFwExecutionError(
@@ -139,26 +151,53 @@ def to_braket_qasm3(circuit, accepted):
 	num_clbits = circuit.num_clbits
 	dag = circuit_to_dag(circuit)
 	dag.remove_qubits(*(set(dag.idle_wires()) & set(dag.qubits)))
-	program_circuit = dag_to_circuit(dag)
-	if program_circuit.qubits and not program_circuit.qregs:
-		program_circuit.add_register(
-			QuantumRegister(bits=program_circuit.qubits, name="q"))
+	trimmed = dag_to_circuit(dag)
+
+	# One pass over the trimmed circuit: gates are renamed and kept in order,
+	# measurements are recorded and held back for the canonical block.
 	measurement_map = []
+	measured = set()
+	operations = []
 	used = set()
-	for index, instruction in enumerate(program_circuit.data):
+	for instruction in trimmed.data:
 		name = instruction.operation.name
+		qubits = [trimmed.find_bit(qubit).index for qubit in instruction.qubits]
 		if name.lower() == "measure":
-			measurement_map.append((
-				program_circuit.find_bit(instruction.qubits[0]).index,
-				program_circuit.find_bit(instruction.clbits[0]).index))
+			measurement_map.append(
+				(qubits[0], trimmed.find_bit(instruction.clbits[0]).index))
+			measured.add(qubits[0])
 			continue
-		if name.lower() in DIRECTIVES:
-			continue
-		new_name = braket_name(name)
-		used.add(new_name)
-		if new_name != name:
-			program_circuit.data[index] = instruction.replace(
-				operation=instruction.operation.copy(name=new_name))
+		if name.lower() != "barrier":
+			after = sorted(measured.intersection(qubits))
+			if after:
+				raise DEFwExecutionError(
+					"Braket takes terminal measurements only: "
+					f"{name} on qubit(s) {after} follows their measurement")
+			if instruction.clbits:
+				raise DEFwExecutionError(
+					f"{name} reads classical bits, which a Braket program "
+					"cannot do")
+		operation = instruction.operation
+		if name.lower() not in DIRECTIVES:
+			new_name = braket_name(name)
+			used.add(new_name)
+			if new_name != name:
+				operation = operation.copy(name=new_name)
+		operations.append((operation, qubits))
+
+	program_circuit = QuantumCircuit()
+	if trimmed.num_qubits:
+		qreg = QuantumRegister(trimmed.num_qubits, "q")
+		program_circuit.add_register(qreg)
+		for operation, qubits in operations:
+			program_circuit.append(
+				operation, [qreg[index] for index in qubits])
+		ranks = sorted(measured)
+		if ranks:
+			creg = ClassicalRegister(len(ranks), "c")
+			program_circuit.add_register(creg)
+			for rank, qubit in enumerate(ranks):
+				program_circuit.measure(qreg[qubit], creg[rank])
 	# Every gate is declared as basis, so the exporter writes none of them
 	# out as a definition in terms of U, which Braket would not take.
 	program = qasm3.dumps(
@@ -170,11 +209,14 @@ def remap_counts(counts, measurement):
 	"""Key the Braket device library's histogram by classical bit.
 
 	The library writes each key with the highest-index measured qubit
-	leftmost, over the measured qubits in ascending order. Qiskit keys by
-	classical bit, highest index leftmost, over every bit of the registers.
-	The two agree only when bit i holds qubit i and every qubit is measured,
-	so rebuild each key from the measurement map recorded at transcode time.
-	An unmeasured bit reads 0, as it does in Qiskit.
+	leftmost, over the measured qubits in ascending order, which
+	to_braket_qasm3's measurement block guarantees on every Braket backend.
+	Qiskit keys by classical bit, highest index leftmost, over every bit of
+	the registers. The two agree only when bit i holds qubit i and every
+	qubit is measured, so rebuild each key from the measurement map recorded
+	at transcode time. An unmeasured bit reads 0, as it does in Qiskit; a
+	qubit measured into several bits fills each of them, and the last
+	measurement into a bit is the one that lands.
 	"""
 	if not counts or not isinstance(measurement, dict):
 		return counts
@@ -187,10 +229,6 @@ def remap_counts(counts, measurement):
 	# the highest measured qubit.
 	position = {
 		qubit: len(measured) - 1 - rank for rank, qubit in enumerate(measured)}
-	clbit_of = {}
-	for qubit, clbit in pairs:
-		# The last measurement of a qubit is the one that lands, as in Qiskit.
-		clbit_of[qubit] = clbit
 	remapped = {}
 	for key, count in counts.items():
 		bits = str(key)
@@ -199,7 +237,7 @@ def remap_counts(counts, measurement):
 				f"Braket counts key {key!r} does not cover the "
 				f"{len(measured)} measured qubits")
 		out = ["0"] * num_clbits
-		for qubit, clbit in clbit_of.items():
+		for qubit, clbit in pairs:
 			out[num_clbits - 1 - clbit] = bits[position[qubit]]
 		new_key = "".join(out)
 		remapped[new_key] = remapped.get(new_key, 0) + count
