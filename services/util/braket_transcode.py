@@ -77,8 +77,14 @@ def accepted_operation_names(device):
 
 
 def to_braket_qasm3(circuit, backend):
-	"""Return OpenQASM 3 and the map from measured qubits to classical bits."""
+	"""Return OpenQASM 3 and the map from measured qubits to classical bits.
+
+	Measure qubits in ascending order into a compact classical register so
+	qubit order and register order agree across Amazon Braket backends. The
+	returned map restores the circuit's original classical-bit layout.
+	"""
 	try:
+		from qiskit.circuit import ClassicalRegister, QuantumCircuit, QuantumRegister
 		from qiskit.converters import circuit_to_dag, dag_to_circuit
 		from mqt.core.qdmi import ProgramFormat
 	except ImportError as exc:
@@ -124,24 +130,58 @@ def to_braket_qasm3(circuit, backend):
 				f"the device accepts none of {missing}, and they could not be "
 				f"decomposed into its operation set {sorted(accepted)}")
 
+	num_clbits = circuit.num_clbits
 	dag = circuit_to_dag(circuit)
 	dag.remove_qubits(*(set(dag.idle_wires()) & set(dag.qubits)))
-	program_circuit = dag_to_circuit(dag)
+	trimmed = dag_to_circuit(dag)
+
+	# Keep gate order and hold measurements for the final canonical block.
 	measurement_map = []
-	for index, instruction in enumerate(program_circuit.data):
-		name = instruction.operation.name.lower()
-		if name == "measure":
-			measurement_map.append((
-				program_circuit.find_bit(instruction.qubits[0]).index,
-				program_circuit.find_bit(instruction.clbits[0]).index))
-		elif name not in DIRECTIVES:
+	measured = set()
+	operations = []
+	used = set()
+	for instruction in trimmed.data:
+		name = instruction.operation.name
+		qubits = [trimmed.find_bit(qubit).index for qubit in instruction.qubits]
+		if name.lower() == "measure":
+			measurement_map.append(
+				(qubits[0], trimmed.find_bit(instruction.clbits[0]).index))
+			measured.add(qubits[0])
+			continue
+		if name.lower() != "barrier":
+			after = sorted(measured.intersection(qubits))
+			if after:
+				raise DEFwExecutionError(
+					"Braket takes terminal measurements only: "
+					f"{name} on qubit(s) {after} follows their measurement")
+			if instruction.clbits:
+				raise DEFwExecutionError(
+					f"{name} reads classical bits, which a Braket program "
+					"cannot do")
+		operation = instruction.operation
+		if name.lower() not in DIRECTIVES:
 			new_name = braket_name(name)
-			if new_name != instruction.operation.name:
-				program_circuit.data[index] = instruction.replace(
-					operation=instruction.operation.copy(name=new_name))
+			used.add(new_name)
+			if new_name != name:
+				operation = operation.copy(name=new_name)
+		operations.append((operation, qubits))
+
+	program_circuit = QuantumCircuit()
+	if trimmed.num_qubits:
+		qreg = QuantumRegister(trimmed.num_qubits, "q")
+		program_circuit.add_register(qreg)
+		for operation, qubits in operations:
+			program_circuit.append(
+				operation, [qreg[index] for index in qubits])
+		ranks = sorted(measured)
+		if ranks:
+			creg = ClassicalRegister(len(ranks), "c")
+			program_circuit.add_register(creg)
+			for rank, qubit in enumerate(ranks):
+				program_circuit.measure(qreg[qubit], creg[rank])
+
 	native = {name.lower() for op in _operations(backend.device)
 		if (name := _operation_name(op))}
-	used = {inst.operation.name for inst in program_circuit.data} - DIRECTIVES
 	if used <= native:
 		# MQT Core's serialization hook suffices for the native vocabulary.
 		program, _fmt = backend._serialize_circuit(
@@ -150,24 +190,22 @@ def to_braket_qasm3(circuit, backend):
 		# The adapter renames gates using native operations only. Export the
 		# broader compiler vocabulary directly until #207 is resolved.
 		from qiskit import qasm3
-		from qiskit.circuit import QuantumRegister
-		if program_circuit.qubits and not program_circuit.qregs:
-			program_circuit.add_register(
-				QuantumRegister(bits=program_circuit.qubits, name="q"))
 		program = qasm3.dumps(program_circuit, includes=(), basis_gates=sorted(used))
-	return program, {
-		"num_clbits": program_circuit.num_clbits, "map": measurement_map}
+	return program, {"num_clbits": num_clbits, "map": measurement_map}
 
 
 def remap_counts(counts, measurement):
 	"""Key the Braket device library's histogram by classical bit.
 
 	The library writes each key with the highest-index measured qubit
-	leftmost, over the measured qubits in ascending order. Qiskit keys by
-	classical bit, highest index leftmost, over every bit of the registers.
-	The two agree only when bit i holds qubit i and every qubit is measured,
-	so rebuild each key from the measurement map recorded at transcode time.
-	An unmeasured bit reads 0, as it does in Qiskit.
+	leftmost, over the measured qubits in ascending order, which
+	to_braket_qasm3's measurement block guarantees on every Braket backend.
+	Qiskit keys by classical bit, highest index leftmost, over every bit of
+	the registers. The two agree only when bit i holds qubit i and every
+	qubit is measured, so rebuild each key from the measurement map recorded
+	at transcode time. An unmeasured bit reads 0, as it does in Qiskit; a
+	qubit measured into several bits fills each of them, and the last
+	measurement into a bit is the one that lands.
 	"""
 	# Remove this when the provider returns counts in classical-bit order.
 	# Applying it again would corrupt permuted outputs.

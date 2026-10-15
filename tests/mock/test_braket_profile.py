@@ -374,6 +374,24 @@ def test_remap_counts_merges_keys_that_land_on_one_bit_pattern():
 		{"10": 4, "11": 6}, measurement) == {"1": 10}
 
 
+def test_remap_counts_fills_every_bit_a_qubit_was_measured_into():
+	# One qubit measured into bits 0 and 2 of a 3-bit register: the program
+	# measures it once, and its value lands in both bits.
+	measurement = {"num_clbits": 3, "map": [(0, 0), (0, 2)]}
+
+	assert braket_transcode.remap_counts(
+		{"1": 10}, measurement) == {"101": 10}
+
+
+def test_remap_counts_lets_the_last_measurement_into_a_bit_win():
+	# Bit 0 takes qubit 0, then qubit 1; bit 1 takes qubit 0. Library key
+	# "01" is q1 = 0, q0 = 1, so bit 0 reads qubit 1's 0 and bit 1 reads 1.
+	measurement = {"num_clbits": 2, "map": [(0, 0), (1, 0), (0, 1)]}
+
+	assert braket_transcode.remap_counts(
+		{"01": 10}, measurement) == {"10": 10}
+
+
 def test_remap_counts_rejects_a_key_of_the_wrong_width():
 	measurement = {"num_clbits": 2, "map": [(0, 0), (1, 1)]}
 

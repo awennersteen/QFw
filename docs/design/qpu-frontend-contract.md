@@ -285,12 +285,14 @@ Unsupported gates are decomposed without a coupling map because Amazon Braket
 compiles and routes the program. Anything still unexpressible fails before a
 task is created.
 
-The device library keys its histogram by measured qubit, highest first, while
-Qiskit keys results by classical bit. QFw records the measurement map and
-rebuilds counts in classical-bit order before creating `qhw-result-v1`.
-This preserves multiple classical destinations and the final write to each
-bit for terminal measurements. Unbound parameters, unsupported reset and
-gates on measured qubits fail before submission.
+Amazon Braket backends can order result columns by qubit index or classical
+register. QFw emits terminal measurements in ascending qubit order into a
+register containing only the measured qubits. This aligns both column orders,
+so the device library's histogram keys have the highest measured qubit first.
+The measurement map restores the original classical-bit layout before creating
+`qhw-result-v1`, including multiple destinations and the final write to each
+bit. Unbound parameters, unsupported reset and gates on measured qubits fail
+before submission.
 
 This keeps normalization decoupled from the libraries and lets the shim absorb
 both "thick" libraries (raw vendor data) and "thin"/neutral ones (a standard
@@ -520,8 +522,10 @@ credential chain, so the identity is the service process's own, and QFw's
 holding a key. The program is Braket's OpenQASM 3 (Section 8), a job's S3
 results URI rides in job `CUSTOM1`, and the device's `CUSTOM1` holds Braket's
 broader `supportedOperations` set rather than a calibration set id, which
-Braket does not publish. The counts come back keyed by measured qubit and
-are rebuilt in classical-bit order. Because every task is billed, a device
+Braket does not publish. The program measures in ascending qubit order into
+a register of the measured qubits, so every Braket backend returns the same
+rows (Section 8), and the counts are rebuilt in classical-bit order. Because
+every task is billed, a device
 can carry `max-shots`, which the profile refuses above before a task exists,
 and `job-timeout-seconds` sets how long a queued QPU task is waited for.
 
