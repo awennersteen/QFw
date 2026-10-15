@@ -192,9 +192,14 @@ print(open_device(name, base_url=arn, custom2="us-west-1").status())
 PY
 ```
 
-`Status.IDLE` or `Status.BUSY` means the device takes tasks now. A task sent
-to an `OFFLINE` device waits in Braket's queue until QFw's
-`job-timeout-seconds` passes, then QFw cancels it.
+`Status.IDLE` means the device is inside an execution window with fewer
+than five tasks queued. `Status.BUSY` means a longer queue or a closed
+execution window, which the library does not tell apart; the Braket
+console's device page lists the windows, in UTC, as does `GetDevice`'s
+`service.executionWindows`. `Status.MAINTENANCE` is Braket's OFFLINE. A
+task sent outside a window waits in Braket's queue until the window opens
+or QFw's `job-timeout-seconds` passes, whichever comes first; QFw then
+cancels it, and a task cancelled before it ran is not billed.
 
 ## 5. Run circuits
 
@@ -251,7 +256,7 @@ grep -r 'failed (' "${QFW_RUN_BASE_DIR}/aws-debug"
 | `get_device_info` fails with "Permission denied" | No credentials reach the service, the profile name is wrong, or the node cannot reach AWS. |
 | `CreateQuantumTask failed (AccessDeniedException): AWSServiceRoleForAmazonBraket role doesn't exist` | Step 1.3 was skipped. Create the role from the Braket Permissions page. |
 | `CreateQuantumTask` denied, or an S3 error, with the role in place | The results bucket is missing, is in another Region, or is not named `amazon-braket-*`; or no bucket is configured and the policy does not allow creating one. |
-| The task sits queued, then QFw reports it timed out and was cancelled | The device is `OFFLINE` or outside its execution window, or the queue is longer than `job-timeout-seconds`. |
+| The task sits queued, then QFw reports it timed out and was cancelled | The device is outside its execution window (status `BUSY`, windows in UTC) or in maintenance, or the queue is longer than `job-timeout-seconds`. |
 | `<n> shots is over the <cap>-shot cap for device ...` | The request is above the entry's `max-shots`. Raise the cap deliberately or lower the shots. |
 | "the device accepts none of [...]" | A gate the device does not take and QFw could not decompose. Check the device's operation set. |
 
