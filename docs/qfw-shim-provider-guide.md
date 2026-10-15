@@ -137,6 +137,11 @@ caps:
 For QDMI-backed machines, use `qdmi` in `libraries`, `preference`, and the
 capability map only after the provider QDMI path can open a real device session.
 
+Amazon Braket devices are QDMI-backed machines with their own keys
+(`qdmi-device-id`, `aws-region`, `s3-results-uri`, `max-shots`, and so on).
+The [Amazon Braket recipe](recipes/run-against-aws-braket.md) lists them with
+a complete entry.
+
 ## Step 3. Add Provider Credentials
 
 Credentials should be resolved per user and per device. Secrets belong in the
@@ -180,6 +185,15 @@ Production sites may use a credential-provider plugin instead of a file-backed
 database. The logical contract should stay the same: QPM resolves a
 reservation-bound credential for the selected user and machine, and the provider
 adapter receives only the credential material it needs.
+
+Amazon Braket devices are the exception to the per-user key. The Braket QDMI
+device library authenticates through the AWS SDK's own credential chain in the
+service process, so QFw holds no AWS secret, and none belongs in the
+device-access file or the credential database. Use the `no-secret` provider
+for a smoke, or a provider of type `entitlement` on a site plane, which checks
+that the user and the device are enabled without binding a key. The
+[Amazon Braket recipe](recipes/run-against-aws-braket.md) covers the account,
+the credential files, and the environment the service needs.
 
 ## Step 4. Add a QPM Shim Service
 
