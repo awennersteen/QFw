@@ -79,6 +79,7 @@ IBM_QS_DEVICE = dict(IBM_DEVICE, **{
 # count and shot cap are what the service advertises and enforces for a
 # device whose library does not say before a session opens.
 SV1_ARN = "arn:aws:braket:::device/quantum-simulator/amazon/sv1"
+CEPHEUS_ARN = "arn:aws:braket:us-west-1::device/qpu/rigetti/Cepheus-1-108Q"
 AWS_DEVICE = {
 	"provider": "aws",
 	"provider-device-id": SV1_ARN,
@@ -137,6 +138,28 @@ def test_shim_example_uses_no_secret_credential_provider():
 	assert sv1["credential-provider"] == "shim-no-secret"
 	assert sv1["libraries"] == ["qdmi"]
 	assert sv1["execution-owner"] == "qdmi"
+	# The Rigetti QPU entry: a billed device, so it carries the shot cap and
+	# the queue wait, and no results bucket, which is a site's own.
+	cepheus = config["qpus"]["aws-cepheus"]
+	assert cepheus["provider"] == "aws"
+	assert cepheus["provider-device-id"] == CEPHEUS_ARN
+	assert cepheus["qdmi-device-id"] == "amazon.braket.rigetti.cepheus-1-108q"
+	assert cepheus["aws-region"] == "us-west-1"
+	assert cepheus["num-qubits"] == 108
+	assert cepheus["max-shots"] == 1024
+	assert cepheus["job-timeout-seconds"] == 1800
+	assert "s3-results-uri" not in cepheus
+	assert cepheus["credential-provider"] == "shim-no-secret"
+	assert cepheus["libraries"] == ["qdmi"]
+	assert cepheus["execution-owner"] == "qdmi"
+	# Both Braket entries select by device id (two aws devices make the
+	# provider alone ambiguous) and forward the fields the profile reads.
+	for name, region in (("aws-sv1", "us-east-1"), ("aws-cepheus", "us-west-1")):
+		selected = device_access.select_qpu(
+			dict(config), str(config_path), provider="aws", device_id=name)
+		assert selected["aws-region"] == region
+		assert selected["qdmi-device-id"] == config["qpus"][name]["qdmi-device-id"]
+	assert selected["max-shots"] == 1024
 
 
 # --- select_qpu(): the fix site --------------------------------------------
