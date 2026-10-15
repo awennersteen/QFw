@@ -7,6 +7,7 @@
 # Current CI scope:
 #   - ci-syntax: Flake8 linting and Python syntax checks
 #   - ci-mock: pytest tests under tests/mock
+#   - ci-qdmi: released provider adapters
 #
 # Note: QFw integration tests require a running distributed framework
 # (PRTE, DEFw, QPM services, simulator binaries) and cannot run on standard
@@ -33,6 +34,21 @@ on:
         default: '["3.10", "3.12"]'
 
 jobs:
+  ci-qdmi:
+    name: ci-qdmi (released providers)
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+    - name: Install released QDMI adapters
+      run: python -m pip install -r setup/qdmi-requirements.txt -c setup/requirements.txt pytest
+    - name: Require both provider adapters
+      run: python -c 'from iqm.qdmi.qiskit import IQMBackend; from amazon.braket.qdmi.qiskit import AmazonBraketBackend'
+    - name: Test adapters and serialization without provider submission
+      run: python -m pytest -q tests/qiskit/test_qdmi_adapters.py tests/qiskit/test_braket_qasm3.py
+
   ci-syntax:
     name: ci-syntax (Python ${{ matrix.python-version }})
     strategy:

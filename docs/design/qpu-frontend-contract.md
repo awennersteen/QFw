@@ -272,32 +272,27 @@ by the library itself.** Two shapes cover what we have:
   (the native IQM client, and QRMI via `QuantumResource.target()`) is normalized
   by a provider adapter (`qhw-iqm`), which also captures provider-specific extras
   such as calibration and quality metrics.
-- **Neutral query interface** — a library that exposes the device through a
-  vendor-neutral query interface (QDMI-on-IQM via MQT Core's FoMaC API) is
-  normalized from the FoMaC `Device` by `drivers/fomac_normalize.py`.
+- **Neutral query interface** — MQT Core's QDMI API exposes vendor-neutral
+  device queries. `drivers/fomac_normalize.py` turns these queries into qhw
+  records.
 
-The Braket path through QDMI shows both directions. In: the circuit a client
-sent, QPY or OpenQASM 2, becomes Braket's self-contained OpenQASM 3 in
-`services/util/braket_transcode.py`, in the gate names the device accepts
-(Braket spells `cx` as `cnot`, `sx` as `v`, and so on). A gate the device does
-not accept is decomposed into ones it does, with no coupling map, because
-Braket compiles and routes a non-verbatim program itself; anything still
-unexpressible fails before a task is created. Out: Braket's backends do not
-agree on the order of a result's columns (SV1 orders them by qubit index,
-Rigetti by classical register), and the device library keys its histogram
-from the columns as they come, highest leftmost, without reading
-`measuredQubits`. So the transcode rewrites the measurements as one block at
-the end of the program, `c[k] = measure q[i_k]` in ascending qubit order into
-a register of just the measured qubits, which makes bit order, statement
-order and qubit order one and the same: every backend returns the same rows,
-and the key reads highest measured qubit leftmost. The transcode records the
-map from those qubits to the circuit's classical bits, and the counts are
-rebuilt in classical-bit order before `qhw-result-v1` is built (verified on
-SV1 and on Rigetti Cepheus-1-108Q with a circuit whose bits are permuted).
-Measurements are terminal, as Braket requires; a gate on a measured qubit is
-refused before a task is created. That is the "shape, not library" rule
-again: the same FoMaC `Device` and `Job` objects, a different vendor-defined
-content.
+For Amazon Braket, `services/util/braket_transcode.py` converts QPY or
+OpenQASM 2 into self-contained OpenQASM 3. It uses `AmazonBraketBackend`'s
+gate aliases and native serializer where possible. The non-verbatim compiler
+also accepts the broader `supportedOperations` vocabulary. QFw exports those
+gates directly because the adapter's serializer uses only native operations.
+Unsupported gates are decomposed without a coupling map because Amazon Braket
+compiles and routes the program. Anything still unexpressible fails before a
+task is created.
+
+Amazon Braket backends can order result columns by qubit index or classical
+register. QFw emits terminal measurements in ascending qubit order into a
+register containing only the measured qubits. This aligns both column orders,
+so the device library's histogram keys have the highest measured qubit first.
+The measurement map restores the original classical-bit layout before creating
+`qhw-result-v1`, including multiple destinations and the final write to each
+bit. Unbound parameters, unsupported reset and gates on measured qubits fail
+before submission.
 
 This keeps normalization decoupled from the libraries and lets the shim absorb
 both "thick" libraries (raw vendor data) and "thin"/neutral ones (a standard
@@ -305,6 +300,19 @@ both "thick" libraries (raw vendor data) and "thin"/neutral ones (a standard
 one — it works for any `BackendV2`, whereas `qhw-iqm` is provider-specific —
 which would trade the provider adapter's richer output (calibration/quality) for
 one code path. That trade-off is an open decision (Section 12), not settled here.
+
+The provider's Qiskit adapter opens each QDMI session through MQT Core and
+owns library registration, catalogue defaults and vendor session parameters.
+The device must be representable by the provider's Qiskit adapter.
+QFw resolves device access, enforces shot caps and deadlines, interrupts the
+wait on cancellation, and translates QDMI introspection into qhw records.
+Native `submit_job` preserves configured S3 destinations. The tested package
+set is in `setup/qdmi-requirements.txt`. Both cluster install paths use it.
+
+IQM sessions use QFw's reservation-bound access. Unset `IQM_TOKENS_FILE`,
+`IQM_QC_ID`, `IQM_QUANTUM_COMPUTER` and `IQM_QC_ALIAS` in the service process
+so ambient settings cannot select another credential or device.
+IQM retains its named-qubit conversion.
 
 ## 9. The gap map
 
@@ -365,12 +373,10 @@ implementation to evaluate the shim against.
     the per-resource descriptor narrows. Lower-level libraries
     are imported lazily, so the service constructs and routes before any real
     library call is made.
-  - `drivers/qdmi_profiles.py` — the vendor-defined parts of QDMI, per
-    provider: how a session opens and from which settings, the program
-    format, what the CUSTOM slots mean, how counts are keyed. `QdmiDriver`
-    keeps the session and job lifecycle and asks the resource's profile for
-    the rest. There is an IQM profile (QDMI-on-IQM) and a Braket profile
-    (MQSC's Amazon Braket device library).
+  - `drivers/qdmi_profiles.py` — QFw resource settings, execution policy,
+    and program/result adaptation for IQM and Braket. The packaged
+    provider adapters open sessions through MQT Core. `QdmiDriver` waits for
+    jobs and converts results to qhw records.
 - **`dev-config/config.yaml`** (resolved via `services/util/device_access.py`)
   gains `libraries:`, `preference:`, and per-resource `caps:` — the persistent
   source for `resolve_descriptor()`, replacing the built-in default.
@@ -421,7 +427,7 @@ concern.
    QRMI (Rust + C + Python) and QDMI (C) each implement against (Section 14).
 5. **Normalization strategy** — shape-driven (today: `qhw-iqm` for libraries
    that expose raw IQM data, `fomac_normalize` for those that expose QDMI's
-   neutral FoMaC query interface) versus a single `Target`-based normalizer for
+   neutral query interface) versus a single `Target`-based normalizer for
    all libraries. The latter is uniform and works for any `BackendV2`, but gives
    up the provider adapter's calibration/quality richness for libraries that
    could supply it (Section 8).
@@ -436,9 +442,9 @@ the job-lifecycle and reservation-binding complexity.
 
 It is a **composable** facet: both libraries serve it, so it is wired for both —
 but they are normalized differently, because they expose different things. QDMI
-is *vendor-neutral*: MQT Core's FoMaC query interface (`mqt.core.qdmi`) exposes
+is *vendor-neutral*: MQT Core's QDMI query interface (`mqt.core.qdmi`) exposes
 the device's real qubit labels, coupling map, gate loci, and calibration
-directly, so the QDMI driver reads them off the FoMaC `Device` and normalizes
+directly, so the QDMI driver reads them off the QDMI `Device` and normalizes
 with `drivers/fomac_normalize.py` — no Qiskit `Target`, no raw vendor data.
 QRMI's `QuantumResource.target()` returns the *raw IQM data* (dynamic
 architecture / calibration / quality sets), so the QRMI driver feeds that
@@ -451,7 +457,7 @@ the call.
 schema, two adapters" pattern most clearly: QRMI populates the IQM
 calibration/quality *observation* identity (set ids, counts, timestamps) from
 `target()`, while QDMI populates the *measured values* — per-qubit T1/T2 and
-per-gate fidelity read live off the FoMaC `Device`, carried under the
+per-gate fidelity read live off the QDMI `Device`, carried under the
 `qdmi.fomac.v1` extension. Both validate as `qhw-calibration-v1`.
 
 Both also carry `calibration.calibration_set_id`, so a snapshot from either
@@ -490,7 +496,7 @@ reservation ends.
 
 Execution is **composable** for the QRMI-vs-QDMI comparison. QDMI runs the same
 circuit through the same `util/iqm_transcode.py`, but submits the
-single transcoded circuit through FoMaC's `submit_job` with the `IQM_JSON`
+single transcoded circuit through QDMI's `submit_job` with the `IQM_JSON`
 program format (QDMI-on-IQM wraps the circuit into a run request itself, where
 QRMI submits the whole run request — a genuine interface difference), polls
 `Job.check()`, reads `Job.get_counts()`, and normalizes to the same
