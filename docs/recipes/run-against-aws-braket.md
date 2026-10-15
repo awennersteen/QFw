@@ -145,7 +145,7 @@ qpus:
 | `url` | Ignored by the library, required by QFw's device selection. |
 | `num-qubits` | Overrides the qubit count QFw reports for the device. The device's own count still appears in `get_device_info`. |
 | `max-shots` | Refused above before a task exists. Keep it on billed devices. |
-| `job-timeout-seconds` | How long a queued task is waited for before QFw cancels it. QPUs queue; 300 seconds is the default. |
+| `job-timeout-seconds` | How long a queued task is waited for before QFw cancels it. QPUs queue; 300 seconds is the default. Set it past the next execution window to submit across a gap (Step 4). |
 
 Measurements are keyed by classical bit, as in Qiskit, whichever device ran
 them. The shim writes its OpenQASM 3 so that Braket's backends, which order
@@ -200,6 +200,25 @@ console's device page lists the windows, in UTC, as does `GetDevice`'s
 task sent outside a window waits in Braket's queue until the window opens
 or QFw's `job-timeout-seconds` passes, whichever comes first; QFw then
 cancels it, and a task cancelled before it ran is not billed.
+
+Cepheus-1-108Q's windows, as `GetDevice` reported them on 2026-10-15, are
+every day from 00:00 to 01:59, 04:00 to 13:59 and 16:00 to 23:59 UTC, so
+the device is away for two hours twice a day. Windows change, so read the
+current ones from the console's device page, or with the AWS CLI where it
+is installed:
+
+```bash
+aws braket get-device --region us-west-1 \
+  --device-arn arn:aws:braket:us-west-1::device/qpu/rigetti/Cepheus-1-108Q \
+  --query deviceCapabilities --output text \
+  | python -c 'import json, sys; print(json.load(sys.stdin)["service"]["executionWindows"])'
+```
+
+A task submitted in the 02:00 gap with the default 30 minute wait sat
+queued and was cancelled by QFw, unbilled. Resubmitted twelve minutes
+before 04:00, the same task ran within the first minute of the window. To
+run across a gap, set `job-timeout-seconds` past the next opening and give
+the smoke's `--circuit-run-timeout` at least the same wait.
 
 ## 5. Run circuits
 
