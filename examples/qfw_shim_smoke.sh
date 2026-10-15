@@ -25,8 +25,9 @@ Optional:
                        get_task_metadata.
   --device-id <id>      the device in qfw_shim_device_access.yaml to bind the
                        shim QPM to (default ornl-iqm-20q; aws-sv1 is Amazon
-                       Braket's SV1 simulator, which needs AWS credentials in
-                       the environment).
+                       Braket's SV1 simulator and aws-cepheus is Rigetti's
+                       Cepheus-1-108Q through Braket, a billed QPU; both need
+                       AWS credentials in the environment).
   --circuit <name>      x (default) or asymmetric, a 3-qubit circuit whose
                        measurements land in permuted classical bits, which
                        catches a result keyed by qubit instead of bit.
