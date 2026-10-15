@@ -77,7 +77,7 @@ def accepted_operation_names(device):
 
 
 def to_braket_qasm3(circuit, backend):
-	"""Return Braket OpenQASM 3 and the legacy counts' measurement map."""
+	"""Return OpenQASM 3 and the map from measured qubits to classical bits."""
 	try:
 		from qiskit.converters import circuit_to_dag, dag_to_circuit
 		from mqt.core.qdmi import ProgramFormat
@@ -87,7 +87,7 @@ def to_braket_qasm3(circuit, backend):
 
 	accepted = accepted_operation_names(backend.device)
 
-	# Braket's Target contains only native gates; its non-verbatim compiler
+	# Braket's Target contains only native gates. Its non-verbatim compiler
 	# also accepts supportedOperations (CUSTOM1).
 	# https://github.com/Munich-Quantum-Software/amazon-braket-qdmi-device/issues/207
 	def braket_name(name):
@@ -105,7 +105,7 @@ def to_braket_qasm3(circuit, backend):
 
 	if circuit.parameters:
 		raise DEFwExecutionError("Braket circuits must have bound parameters")
-	# The released driver reports final qubit values, so it cannot recover
+	# The driver reports final qubit values, so it cannot recover
 	# an earlier measurement followed by a gate.
 	# https://github.com/Munich-Quantum-Software/amazon-braket-qdmi-device/pull/242
 	measured_qubits = set()
@@ -147,8 +147,8 @@ def to_braket_qasm3(circuit, backend):
 		program, _fmt = backend._serialize_circuit(
 			program_circuit, [ProgramFormat.QASM3])
 	else:
-		# The adapter re-aliases against native operations only; preserve the
-		# broader compiler vocabulary here until #207 is resolved.
+		# The adapter renames gates using native operations only. Export the
+		# broader compiler vocabulary directly until #207 is resolved.
 		from qiskit import qasm3
 		from qiskit.circuit import QuantumRegister
 		if program_circuit.qubits and not program_circuit.qregs:
@@ -169,8 +169,8 @@ def remap_counts(counts, measurement):
 	so rebuild each key from the measurement map recorded at transcode time.
 	An unmeasured bit reads 0, as it does in Qiskit.
 	"""
-	# Remove this with the provider's program-output implementation; applying
-	# it to classical-ordered counts would corrupt permuted outputs.
+	# Remove this when the provider returns counts in classical-bit order.
+	# Applying it again would corrupt permuted outputs.
 	# https://github.com/Munich-Quantum-Software/amazon-braket-qdmi-device/pull/242
 	if not counts or not isinstance(measurement, dict):
 		return counts

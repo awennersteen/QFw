@@ -287,7 +287,7 @@ def test_the_iqm_profile_encodes_an_iqm_json_program(monkeypatch):
 		("OPENQASM 2.0;", {"qubits": ["QB1", "QB2"]}, {"q0": "QB2"})]
 
 
-# --- the IQM architecture rebuilt from FoMaC ----------------------------------
+# --- the IQM architecture rebuilt from QDMI ----------------------------------
 
 def _fomac_topology():
 	# Shaped like extract_topology's output for the q20, cut to three qubits.
@@ -341,7 +341,7 @@ def test_without_a_measure_gate_only_the_qubits_are_passed():
 
 
 def test_a_locus_outside_the_qubits_means_only_the_qubits_are_passed():
-	# A computational resonator. FoMaC does not say which sites are
+	# A computational resonator. QDMI does not say which sites are
 	# resonators, so a device with them is not rebuilt.
 	from svc_lib_qpm.drivers.qdmi_profiles import iqm_architecture
 

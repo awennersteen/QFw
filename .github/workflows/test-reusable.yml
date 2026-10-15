@@ -7,7 +7,7 @@
 # Current CI scope:
 #   - ci-syntax: Flake8 linting and Python syntax checks
 #   - ci-mock: pytest tests under tests/mock
-#   - ci-qdmi: released provider adapters and Braket serialization
+#   - ci-qdmi: released provider adapters
 #
 # Note: QFw integration tests require a running distributed framework
 # (PRTE, DEFw, QPM services, simulator binaries) and cannot run on standard

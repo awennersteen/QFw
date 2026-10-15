@@ -1,25 +1,9 @@
-# QDMI driver — device-introspection facet, via QDMI's FoMaC query interface.
-#
-# QDMI is vendor-neutral: MQT Core's FoMaC query interface (bound in Python as
-# mqt.core.qdmi) exposes the device's sites (real qubit names + T1/T2), the
-# operations (loci + fidelity), and the coupling map. This driver reads that
-# directly and normalizes it to the provider-neutral qhw schema
-# (fomac_normalize) -- no Qiskit Target, no raw vendor data. QDMI is
-# session-based and strong on device & calibration introspection. QRMI remains
-# the default execution owner, while this driver also implements execution for
-# explicit QDMI comparisons.
-#
-# Milestone status (design doc qpu-frontend-contract.md section 13):
-# get_device_info / get_coupling_graph normalize the device topology, and
-# get_calibration_snapshot reads the device's live per-qubit coherence (T1/T2)
-# and per-gate fidelity through FoMaC -- all with the device's real qubit labels
-# (e.g. "QB1"). get_backend_info / get_dynamic_backend_info stay with QRMI
-# because their native shape carries raw IQM architecture data that QDMI does
-# not expose.
+# Run jobs and normalize device queries through MQT Core's QDMI API.
 #
 # The packaged provider adapters own registration, catalogue defaults and
 # session parameters through MQT Core's QDMI driver. QFw retains its resource
 # policy, qhw records and interruptible job wait.
+# Backend metadata that carries raw IQM architecture data stays with QRMI.
 
 from .base_driver import BaseDriver, JobRecords, reservation_cache_key
 from .qdmi_profiles import profile_for
@@ -34,7 +18,7 @@ import time
 
 
 def _job_status(status):
-	# FoMaC Job.check() returns a Status enum; reduce it to a lowercase name.
+	# QDMI Job.check() returns a Status enum; reduce it to a lowercase name.
 	for attr in ("name", "value"):
 		value = getattr(status, attr, None)
 		if value is not None:
@@ -100,7 +84,7 @@ class QdmiDriver(BaseDriver):
 
 	def evict_reservation(self, reservation_id):
 		# The reservation has ended: drop its session, and the token it
-		# opened with goes too. A FoMaC Device has no close(), and its
+		# opened with goes too. A QDMI Device has no close(), and its
 		# session ends when the last reference goes.
 		with self._backends_lock:
 			backend = self._backends.pop(
@@ -150,7 +134,7 @@ class QdmiDriver(BaseDriver):
 		return (self._descriptor.get("provider", "iqm"),
 				self._descriptor.get("id", "iqm-device"))
 
-	# --- introspection facet: FoMaC Device -> qhw (section 13 milestone) ---
+	# --- introspection facet: QDMI Device -> qhw (section 13 milestone) ---
 
 	def get_device_info(self):
 		provider, device_id = self._ids()
@@ -165,7 +149,7 @@ class QdmiDriver(BaseDriver):
 		return fomac_normalize.to_coupling_record(topo, provider, device_id)
 
 	def get_calibration_snapshot(self, calibration_set_id=None):
-		# FoMaC exposes the device's live per-qubit coherence (T1/T2) and
+		# QDMI exposes the device's live per-qubit coherence (T1/T2) and
 		# per-gate fidelity; normalize them to qhw-calibration-v1. The record
 		# names the calibration set it was read under when the device publishes
 		# one. Selecting a *different* set is still a follow-up: the device
@@ -176,13 +160,13 @@ class QdmiDriver(BaseDriver):
 			calibration_set_slot=self._profile.calibration_set_slot)
 		return fomac_normalize.to_calibration_record(cal, provider, device_id)
 
-	# --- execution: circuit -> provider program -> FoMaC submit_job ------
+	# --- execution: circuit -> provider program -> QDMI submit_job ------
 
 	def run_circuit(self, circuit):
 		# The circuit arrives in a format this QPM declares, QPY or OpenQASM 2
 		# (see util.circuit_payload). The profile encodes it as the program
 		# its device library takes (IQM_JSON for QDMI-on-IQM, OpenQASM 3 for
-		# Braket), then it is submitted through QDMI's FoMaC job interface,
+		# Braket), then it is submitted through MQT Core's QDMI job interface,
 		# polled to completion, and the counts are normalized to
 		# qhw-result-v1 (the same record the QRMI path produces).
 		# The reservation's credential, bound by the QPM controller
@@ -228,8 +212,8 @@ class QdmiDriver(BaseDriver):
 
 		timing = {}
 		start = time.monotonic()
-		# Native submission preserves the resource's Braket S3 destination;
-		# the released Braket backend has no corresponding run option.
+		# Native submission preserves the resource's Braket S3 destination,
+		# which the provider's Qiskit backend does not expose as a run option.
 		with instrumentation.backend_phase("submit"):
 			try:
 				job = device.submit_job(
@@ -255,11 +239,7 @@ class QdmiDriver(BaseDriver):
 		timing["wait_seconds"] = (
 			time.monotonic() - start - timing["submit_seconds"])
 		try:
-			# FoMaC exposes QDMI_JOB_PROPERTY_ID as a PROPERTY, not a method.
-			# Calling it raised TypeError, which the except below then swallowed,
-			# so job_id was always None and every QDMI result record lost the
-			# provider job id -- leaving QDMI runs uncorrelatable with the
-			# IQM-side job. QDMI-on-IQM does populate the property.
+			# Job.id is an optional property, rather than a method.
 			job_id = job.id
 		except Exception as exc:
 			# A device need not implement QDMI_JOB_PROPERTY_ID; carry on without
@@ -351,7 +331,7 @@ class QdmiDriver(BaseDriver):
 		return int(position) if position is not None else None
 
 	def _poll_job(self, job, timeout, poll, cancel_event=None):
-		# Poll FoMaC job.check() until a terminal state, and return
+		# Poll QDMI job.check() until a terminal state, and return
 		# completed, failed or cancelled.
 		#
 		# A cancel from the QPM (cancel_event, set by the shim QRC) or the

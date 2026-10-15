@@ -14,7 +14,7 @@ IQM_IMPLEMENTATION = "qdmi"
 
 
 def iqm_architecture(topology, calibration_set_id):
-	# The IQM dynamic quantum architecture rebuilt from FoMaC topology, for
+	# The IQM dynamic quantum architecture rebuilt from QDMI topology, for
 	# util.iqm_transcode to transpile against. QDMI-on-IQM builds its
 	# operations from IQM's own architecture, so each operation's name and
 	# loci are IQM's gate name and loci. Each gate gets a single
@@ -27,7 +27,7 @@ def iqm_architecture(topology, calibration_set_id):
 	#   - no measure gate, without which IQMBackendBase raises a KeyError
 	#     rather than a DEFwExecutionError the caller would fall back on;
 	#   - a locus naming a component that is not a qubit. That is a
-	#     computational resonator, and FoMaC does not say which sites are
+	#     computational resonator, and QDMI does not say which sites are
 	#     resonators, so a device with them is not modeled here.
 	qubits = [str(qubit) for qubit in topology.get("qubits") or []]
 	bare = {"qubits": qubits}
@@ -172,7 +172,7 @@ class IqmQdmiProfile(QdmiProfile):
 		# The IQM QDMI library refuses to initialize a device session without a
 		# base URL + token, and every device-property query then fails with a
 		# bad-session-state error. Catch the missing credentials here so the
-		# failure names what to set instead of surfacing deep inside FoMaC.
+		# failure names what to set instead of surfacing deep inside QDMI.
 		missing = []
 		if not base_url:
 			missing.append("base URL (QFW_QC_URL or device-access url)")
@@ -212,7 +212,7 @@ class IqmQdmiProfile(QdmiProfile):
 		# The transcode needs the device's architecture to transpile a circuit
 		# that is not already native, h and cx for instance. QDMI has no raw
 		# dynamic-architecture dict like QRMI's target(), so it is rebuilt
-		# from FoMaC topology and the calibration set id (iqm_architecture).
+		# from QDMI topology and the calibration set id (iqm_architecture).
 		# Serialization stays a driver method, so a test can stand in for it.
 		from util.iqm_transcode import build_iqm_circuit
 		mapping = info.get("iqm_qubit_mapping") or info.get("qubit_mapping")
