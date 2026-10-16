@@ -36,7 +36,7 @@ def test_repeated_backend_construction_keeps_separate_sessions(monkeypatch, prov
 			region=None, reservation_arn=None) for _ in range(3)]
 		assert all(kwargs["custom2"] is None and kwargs["custom3"] is None
 			for _, kwargs in opened)
-	else:
+	elif provider == "ibm":
 		monkeypatch.setenv("IBM_QUANTUM_API_KEY", "ambient-key")
 		monkeypatch.setenv("IBM_QUANTUM_INSTANCE_CRN", "ambient-instance")
 		monkeypatch.setenv("IBM_QUANTUM_BACKEND", "ambient-backend")
@@ -52,6 +52,8 @@ def test_repeated_backend_construction_keeps_separate_sessions(monkeypatch, prov
 			"auth_url": "https://iam.example.org/identity/token"}
 			for token, instance in [("alice", "first"), ("bob", "second"), ("alice", "first")]]
 		assert all(device_id == "ibm.default" for device_id, _ in opened)
+	else:
+		raise ValueError(f"Unknown provider: {provider!r}")
 	assert [backend.device for backend in backends] == devices
 	assert len({id(device) for device in devices}) == 3
 	assert len({device_id for device_id, _ in opened}) == 1

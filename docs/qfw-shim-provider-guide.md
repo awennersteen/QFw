@@ -186,6 +186,14 @@ database. The logical contract should stay the same: QPM resolves a
 reservation-bound credential for the selected user and machine, and the provider
 adapter receives only the credential material it needs.
 
+### IQM
+
+For IQM, store each user's API token in the `api_key` field shown above.
+The native IQM service and the shim's QRMI and QDMI paths use the same
+device-access settings and per-user credentials.
+
+### Amazon Braket
+
 Amazon Braket devices are the exception to the per-user key. The Braket QDMI
 device library authenticates through the AWS SDK's own credential chain in the
 service process, so QFw holds no AWS secret, and none belongs in the
@@ -195,10 +203,11 @@ that the user and the device are enabled without binding a key. The
 [Amazon Braket recipe](recipes/run-against-aws-braket.md) covers the account,
 the credential files, and the environment the service needs.
 
-### IBM Cloud Qiskit Runtime through QDMI
+### IBM
 
-IBM QDMI 1.0 requires Python 3.11 or newer. Install the provider packages from
-`setup/qdmi-requirements.txt`, then configure an IBM backend:
+IBM QDMI 1.0 supports IBM Cloud Qiskit Runtime and requires Python 3.11 or
+newer. Install the provider packages from `setup/qdmi-requirements.txt`, then
+configure an IBM backend:
 
 ```yaml
 qpus:

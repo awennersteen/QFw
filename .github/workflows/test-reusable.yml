@@ -52,7 +52,7 @@ jobs:
         from ibm.qdmi.qiskit import IBMBackend
         PY
     - name: Test adapters and serialization without provider submission
-      run: python -m pytest -q tests/qiskit/test_qdmi_adapters.py tests/qiskit/test_braket_qasm3.py tests/qiskit/test_ibm_qdmi.py
+      run: python -m pytest -q tests/qiskit/test_qdmi_adapters.py tests/qiskit/test_braket_qdmi.py tests/qiskit/test_ibm_qdmi.py
 
   ci-syntax:
     name: ci-syntax (Python ${{ matrix.python-version }})

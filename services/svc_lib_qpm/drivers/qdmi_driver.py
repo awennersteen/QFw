@@ -166,7 +166,7 @@ class QdmiDriver(BaseDriver):
 	def run_circuit(self, circuit):
 		# The circuit arrives in a format this QPM declares, QPY or OpenQASM 2
 		# (see util.circuit_payload). The profile encodes it as the program
-		# its device library takes (IQM_JSON for QDMI-on-IQM, OpenQASM 3 for
+		# its device library takes (IQM_JSON for IQM, OpenQASM 3 for
 		# Amazon Braket and IBM), then it is submitted through MQT Core's
 		# QDMI job interface, polled to completion, and the counts are normalized to
 		# qhw-result-v1 (the same record the QRMI path produces).
