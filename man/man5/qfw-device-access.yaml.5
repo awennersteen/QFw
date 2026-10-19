@@ -68,6 +68,11 @@ types, set
 .B libraries
 to
 .BR [qrmi] .
+A
+.B pasqal
+device sets
+.BR PasqalCloud ,
+the only Pasqal resource type the shim runs.
 .TP
 .B service-crn
 IBM Cloud service instance CRN for an
@@ -129,7 +134,28 @@ timeout this driver polls for, so QRMI does not give up on a job still being
 waited on.
 .B QFW_IBM_JOB_TIMEOUT_SECONDS
 overrides it. The other IBM resource types treat the same QRMI variable as
-optional, so QFw leaves it unset for them.
+optional, so QFw leaves it unset for them. On every QRMI device it is also
+how long the shim waits for a job before cancelling it, 300 seconds when
+unset; on a
+.B pasqal
+device a job without it waits as long as Pasqal Cloud queues it, or until
+its reservation closes. The value is a number of seconds.
+.TP
+.B project-id
+Pasqal Cloud project that jobs on a
+.B pasqal
+device are billed to. It is the default for users whose credential entry does
+not name a project, which a file credential database does with
+.BR project_id .
+A project in a reservation's credential takes precedence. A job needs a
+project, which a Pasqal config file under
+.B PASQAL_CONFIG_ROOT
+may name instead. The device itself, such as
+.B EMU_FREE
+or
+.BR FRESNEL ,
+is the
+.BR provider-device-id .
 .SH CREDENTIAL PROVIDERS
 The optional
 .B credential-providers
@@ -181,6 +207,14 @@ qpus:
     s3-endpoint: https://store.example
     s3-bucket: qfw-results
     s3-region: us-east
+    credential-db: qpu-users.json
+  pasqal-emu-free:
+    provider: pasqal
+    provider-device-id: EMU_FREE
+    resource-type: PasqalCloud
+    url: https://apis.pasqal.cloud
+    project-id: PROJECT
+    libraries: [qrmi]
     credential-db: qpu-users.json
 .EE
 .SH SEE ALSO

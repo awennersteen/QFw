@@ -139,7 +139,7 @@ class QdmiDriver(BaseDriver):
 
 	# --- introspection facet: QDMI Device -> qhw (section 13 milestone) ---
 
-	def get_backend_info(self):
+	def get_backend_info(self, credential=None):
 		# The composite the QRMI driver returns for a device that is not IBM
 		# (and the native svc_iqm_qpm): the provider, that metadata is
 		# served, the active qubits and the embedded qhw device record, so a
@@ -147,9 +147,11 @@ class QdmiDriver(BaseDriver):
 		# resource too. QDMI has no raw provider architecture to put under
 		# static_architecture, so that key is empty, as it is for a QRMI too
 		# old to report one. The calibration set id is the provider's, read
-		# from its custom slot the way the calibration snapshot reads it.
+		# from its custom slot the way the calibration snapshot reads it. A
+		# reservation-bound read opens the device with that reservation's
+		# credential, as its circuits do.
 		provider, device_id = self._ids()
-		device = self._device()
+		device = self._device(credential)
 		topo = fomac_normalize.extract_topology(device)
 		return {
 			"backend": provider,

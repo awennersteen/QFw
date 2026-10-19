@@ -370,6 +370,29 @@ def test_get_backend_info_ibm_raises_on_empty_configuration(monkeypatch):
 		driver.get_backend_info()
 
 
+@pytest.mark.parametrize("provider,target", (
+	("ibm", _FULL_TARGET),
+	("iqm", {"dynamic_quantum_architecture": {"qubits": ["QB1"]}}),
+))
+def test_get_backend_info_reads_the_target_with_the_credential(
+		monkeypatch, provider, target):
+	# A reservation-bound read opens the device with the reservation's
+	# credential on every provider, as it does for Pasqal.
+	_install_qhw_ibm_stub(monkeypatch)
+	iqm_stub = types.ModuleType("qhw_iqm")
+	iqm_stub.normalize_device = lambda *a, **k: {}
+	monkeypatch.setitem(sys.modules, "qhw_iqm", iqm_stub)
+	driver = _driver(provider=provider)
+	credentials = []
+	driver._target = lambda credential=None: (
+		credentials.append(credential) or target)
+	credential = {"reservation_id": 7, "token": "user-token"}
+
+	driver.get_backend_info(credential=credential)
+
+	assert credentials and all(c == credential for c in credentials)
+
+
 # Introspection methods must route to qhw_iqm (not qhw_ibm) for non-IBM.
 def test_get_dynamic_backend_info_iqm_returns_live_architecture(monkeypatch):
 	iqm_stub = types.ModuleType("qhw_iqm")

@@ -61,3 +61,94 @@ def test_the_capability_bit_follows_what_the_qpm_runs(
 		info["qpm_capabilities"],
 		qpm_selection_for_provider("shim")["qpm_capabilities"]
 	) == (provider != "pasqal")
+
+
+# --- reading the devices as a reservation ------------------------------------
+
+class _Controller:
+	service_state = "running"
+
+	def __init__(self, error=None, closing=False):
+		self.error = error
+		self.closing = closing
+		self.asked = []
+
+	def validate_reservation_for_context(self, context):
+		from util.qpm.admission import QPMAdmissionValidationError
+		if self.closing:
+			raise QPMAdmissionValidationError(
+				f"reservation is closing: "
+				f"reservation_id={context.reservation_id}")
+
+	def provider_credential_for_reservation(self, reservation_id, operation):
+		self.asked.append((reservation_id, operation))
+		if self.error:
+			raise self.error
+		return {"secret": {"token": "alice-tok", "project_id": "proj-alice"},
+			"metadata": {"provider": "file"}}
+
+
+def _discovery_qpm(monkeypatch, controller):
+	import types
+	qpm = _lib_qpm(monkeypatch, "pasqal")
+	qpm.controller = controller
+	qpm.qrc = types.SimpleNamespace(
+		get_backend_info=lambda lib=None, credential=None: credential)
+	return qpm
+
+
+def test_the_devices_are_read_with_the_reservations_credential(monkeypatch):
+	# Resolved by the QPM from its own bindings, never sent by the client,
+	# and shaped as execution's (controller.attach_provider_credential).
+	controller = _Controller()
+	qpm = _discovery_qpm(monkeypatch, controller)
+
+	assert qpm.get_backend_info(reservation_id="7") == {
+		"token": "alice-tok", "project_id": "proj-alice",
+		"reservation_id": 7}
+	assert controller.asked[-1] == (7, "get_backend_info")
+	assert qpm.get_backend_info() is None
+
+
+def test_a_reservation_that_does_not_hold_is_refused(monkeypatch):
+	from defw_exception import DEFwExecutionError
+	from util.qpm.admission import QPMAdmissionValidationError
+	qpm = _discovery_qpm(monkeypatch, _Controller(
+		QPMAdmissionValidationError("invalid reservation: state=closed")))
+
+	with pytest.raises(DEFwExecutionError, match="state=closed"):
+		qpm.get_backend_info(reservation_id=7)
+
+
+def test_a_closing_reservation_reads_nothing(monkeypatch):
+	# Checked as for execution, so a reservation being released cannot open
+	# a resource that outlives its eviction.
+	from defw_exception import DEFwExecutionError
+	controller = _Controller(closing=True)
+	qpm = _discovery_qpm(monkeypatch, controller)
+
+	with pytest.raises(DEFwExecutionError, match="reservation is closing"):
+		qpm.get_backend_info(reservation_id=7)
+	assert controller.asked == []
+
+
+def test_the_credential_reaches_the_qrmi_driver(monkeypatch):
+	import json
+	import types
+	from svc_lib_qpm.drivers.qrmi_driver import QrmiDriver
+	from svc_lib_qpm.frontend import Frontend
+	opened = []
+	descriptor = {
+		"provider": "pasqal", "id": "pasqal-fresnel",
+		"provider_device_id": "FRESNEL", "resource_type": "PasqalCloud",
+		"libraries": ["qrmi"], "caps": {"get_backend_info": ["qrmi"]}}
+	driver = QrmiDriver(descriptor)
+	driver._qpu = lambda credential=None: opened.append(credential) or (
+		types.SimpleNamespace(target=lambda: types.SimpleNamespace(
+			value=json.dumps([{"device_type": "FRESNEL", "specs": "{}"}]))))
+	frontend = Frontend([driver], descriptor)
+
+	frontend.get_backend_info(credential={"reservation_id": 7})
+	frontend.get_backend_info()
+
+	assert opened == [{"reservation_id": 7}, None]

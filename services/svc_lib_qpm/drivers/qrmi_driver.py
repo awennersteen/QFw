@@ -23,7 +23,8 @@
 # composite with an embedded qhw device). Circuit execution uses QRMI's task
 # lifecycle and returns normalized qhw results.
 
-from .base_driver import BaseDriver, JobRecords, reservation_cache_key
+from .base_driver import (BaseDriver, JobRecords, pasqal_backend_info,
+		reservation_cache_key)
 from defw_exception import (DEFwExecutionError, DEFwNotFound,
 		DEFwNotReady)
 from util import instrumentation
@@ -86,6 +87,32 @@ IBM_RESOURCE_ENV_KINDS = {
 	"IBMQuantumComputeService": "QCS",
 	"IBMQuantumSystem": "QS",
 }
+
+# QRMI's Pasqal Cloud resource reads a token and the project its jobs are
+# billed to, as {backend}_QRMI_PASQAL_CLOUD_*, and takes the API base URL as
+# an override. The resource id is the Pasqal device, EMU_FREE or FRESNEL for
+# instance, so it is the provider-device-id in device-access config.
+PASQAL_CLOUD_TOKEN = "QRMI_PASQAL_CLOUD_AUTH_TOKEN"
+PASQAL_CLOUD_PROJECT = "QRMI_PASQAL_CLOUD_PROJECT_ID"
+PASQAL_CLOUD_BASE_URL = "QRMI_PASQAL_CLOUD_BASE_URL"
+# What QRMI can log in with and renew a token from: a service account, the
+# config file under a root (the ~/.pasqal/config Pasqal's own tools read), or
+# a username and password. A config map carries them unprefixed.
+PASQAL_CONFIG_ROOT = "PASQAL_CONFIG_ROOT"
+PASQAL_LOGIN = (
+	"QRMI_PASQAL_CLOUD_CLIENT_ID", "QRMI_PASQAL_CLOUD_CLIENT_SECRET",
+	PASQAL_CONFIG_ROOT, "PASQAL_USERNAME", "PASQAL_PASSWORD")
+
+# A Pasqal resource serves execution, and get_backend_info hands back the
+# Pulser device its target() carries, which a Pulser client builds sequences
+# against. No qhw normalizer reads a Pulser device, so the qhw introspection
+# calls are a gap for it rather than an IQM parse of the wrong payload.
+PASQAL_CAPABILITIES = frozenset({
+	"get_backend_info",
+	"run_circuit",
+	"get_task_timing",
+	"get_task_metadata",
+})
 
 # IBM Cloud's IAM endpoint. QRMI trades the API key for a token there, with
 # grant_type urn:ibm:params:oauth:grant-type:apikey against /identity/token,
@@ -245,6 +272,11 @@ class QrmiDriver(BaseDriver):
 		self._target_cache = {}
 		self._jobs = JobRecords("QRMI")
 
+	def implements(self, call):
+		if self._provider() == "pasqal":
+			return call in PASQAL_CAPABILITIES
+		return super().implements(call)
+
 	def _resource(self):
 		# Lazy import so the service/Frontend construct and route even where
 		# the qrmi package is not importable; only a real call needs it.
@@ -302,11 +334,13 @@ class QrmiDriver(BaseDriver):
 		# Resolve the IQM endpoint + token for the QRMI resource. Honor the same
 		# env vars the native svc_iqm_qpm uses, then fall back to the shared
 		# device-access config (util.device_access). Mirrors QdmiDriver._access.
-		# The IBM service CRN is returned too, from the credential or the user's
-		# credential DB entry, when either names one. See _ensure_ibm_env.
+		# The IBM service CRN and the Pasqal project are returned too, from the
+		# credential or the user's credential DB entry, when either names one.
+		# See _ensure_ibm_env and _pasqal_cloud_settings.
 		credential = dict(credential or {})
 		provider = self._descriptor.get("provider", "iqm")
 		service_crn = credential.get("service_crn")
+		project_id = credential.get("project_id")
 		object_storage = {
 			key: credential[key] for key in OBJECT_STORAGE_SECRET_KEYS
 			if credential.get(key)}
@@ -338,6 +372,7 @@ class QrmiDriver(BaseDriver):
 			base_url = base_url or cfg.get("url")
 			token = token or cfg.get("api_key")
 			service_crn = service_crn or cfg.get("service_crn")
+			project_id = project_id or cfg.get("project_id")
 			for key in OBJECT_STORAGE_SECRET_KEYS:
 				if not object_storage.get(key) and cfg.get(key):
 					object_storage[key] = cfg[key]
@@ -356,6 +391,7 @@ class QrmiDriver(BaseDriver):
 			"provider_device_id": provider_device_id,
 			"quantum_computer": provider_device_id,
 			"service_crn": service_crn,
+			"project_id": project_id,
 		}
 		resolved.update(object_storage)
 		return resolved
@@ -436,12 +472,20 @@ class QrmiDriver(BaseDriver):
 
 	def _ensure_resource_env(self, type_name, alias, credential=None):
 		# Each resource type reads its own {backend}_QRMI_* variables. Populate
-		# the families we can resolve; Pasqal and Alice & Bob have no
+		# the families we can resolve; PasqalLocal and Alice & Bob have no
 		# device-access mapping yet and rely on the environment already
 		# carrying theirs, from the SPANK plugin or the operator.
 		if type_name == "IQMServer":
 			self._ensure_iqm_isa_env(alias, credential=credential)
 			return
+		if type_name == "PasqalCloud":
+			# Such a qrmi also reads $HOME/.pasqal/config and the unprefixed
+			# PASQAL_USERNAME, whoever's they are, beside a user's token.
+			raise DEFwExecutionError(
+				"the shim opens Pasqal Cloud resources with "
+				"QuantumResource.from_config(), which keeps a user's token "
+				"apart from the service's login; install qrmi 0.25.0 or "
+				"later")
 		kind = IBM_RESOURCE_ENV_KINDS.get(type_name)
 		if kind:
 			self._ensure_ibm_env(kind, alias, credential=credential)
@@ -470,6 +514,13 @@ class QrmiDriver(BaseDriver):
 				"; set them, or set QFW_QC_URL/QFW_API_KEY, or configure "
 				"device access (these are normally injected by the SPANK "
 				"plugin inside a reservation)")
+		if kind == "PASQAL":
+			return DEFwExecutionError(
+				"a Pasqal Cloud job needs " + " and ".join(names) +
+				". The project comes from the user's project_id entry in "
+				"the credential DB, the device's project-id key in "
+				"device-access config, or the config file under "
+				f"{PASQAL_CONFIG_ROOT}")
 		message = (
 			"QRMI IBM access needs " + " and ".join(names) + ". The "
 			"endpoint and API key come from device-access config or "
@@ -586,11 +637,84 @@ class QrmiDriver(BaseDriver):
 		backend = alias.split(",")[0]
 		settings, required = self._ibm_settings(
 			kind, backend, credential=credential)
+		self._ensure_settings_env(backend, settings, required, kind)
+
+	def _ensure_settings_env(self, backend, settings, required, kind):
 		self._write_settings_env(backend, settings)
 		missing = [key for key in required
 				if not os.environ.get(f"{backend}_{key}")]
 		if missing:
 			raise self._missing_settings_error(backend, missing, kind=kind)
+
+	def _pasqal_cloud_settings(self, backend, credential=None):
+		# What QRMI's Pasqal Cloud resource authenticates with, the project
+		# jobs are billed to, and the API base URL, as unprefixed setting
+		# names. QRMI does the login and renews the token; this picks whose
+		# identity it uses, and never two at once.
+		#
+		# A reservation whose credential carries a token runs as that user:
+		# the token, the user's project (else the device's project-id), the
+		# credential's URL (else QFW_QC_URL, else the device's), and the
+		# service's own login is cleared from the map. Nothing is resolved
+		# for the service's own user, whose project must not bill this one. QRMI renews an
+		# expiring token with whatever login it holds, so a service account
+		# left beside the token would carry on as the operator once it
+		# expires. A reservation id alone, from the no-secret provider, or an
+		# entitlement holding no token, names no user identity.
+		#
+		# Otherwise the resource runs as the service: the token set for the
+		# backend or QFW_API_KEY, the service account
+		# {backend}_QRMI_PASQAL_CLOUD_CLIENT_ID and _CLIENT_SECRET, and,
+		# opted into explicitly, PASQAL_CONFIG_ROOT (or
+		# {backend}_PASQAL_CONFIG_ROOT) and PASQAL_USERNAME/PASQAL_PASSWORD,
+		# the ones Pasqal's own tools read. $HOME is never passed, so a
+		# service does not pick up whatever account its user's config file
+		# holds. The project is the reservation's (an entitlement names the
+		# user's), else the backend's, else the service user's credential DB
+		# entry, else the device's; with a config root the file may name it
+		# instead. The URL is the backend's, else device access's, else the
+		# device's own, so a failed lookup does not drop it.
+		credential = dict(credential or {})
+		token = credential.get("api_key") or credential.get("token")
+		device_url = self._descriptor.get("url")
+		if token:
+			project = (credential.get("project_id")
+				or self._descriptor.get("project_id"))
+			url = (credential.get("url") or os.environ.get("QFW_QC_URL")
+				or device_url)
+			return {
+				PASQAL_CLOUD_TOKEN: token,
+				PASQAL_CLOUD_PROJECT: str(project) if project else None,
+				PASQAL_CLOUD_BASE_URL: str(url).rstrip("/") if url else None,
+				**dict.fromkeys(PASQAL_LOGIN),
+			}, ()
+
+		def current(key):
+			return os.environ.get(f"{backend}_{key}")
+
+		access = {}
+		if not (current(PASQAL_CLOUD_TOKEN) and current(PASQAL_CLOUD_BASE_URL)):
+			try:
+				access = self._access()
+			except DEFwExecutionError:
+				# A service that logs in by service account or config file
+				# needs neither a URL nor a token from device access.
+				access = {}
+		project = (credential.get("project_id")
+			or current(PASQAL_CLOUD_PROJECT)
+			or access.get("project_id")
+			or self._descriptor.get("project_id"))
+		return {
+			PASQAL_CLOUD_TOKEN: current(PASQAL_CLOUD_TOKEN) or access.get("token"),
+			PASQAL_CLOUD_PROJECT: str(project) if project else None,
+			PASQAL_CLOUD_BASE_URL: (current(PASQAL_CLOUD_BASE_URL)
+				or access.get("base_url")
+				or (str(device_url).rstrip("/") if device_url else None)),
+			PASQAL_CONFIG_ROOT: (current(PASQAL_CONFIG_ROOT)
+				or os.environ.get(PASQAL_CONFIG_ROOT)),
+			"PASQAL_USERNAME": os.environ.get("PASQAL_USERNAME"),
+			"PASQAL_PASSWORD": os.environ.get("PASQAL_PASSWORD"),
+		}, ()
 
 	def _object_storage_settings(self, prefix, backend, access,
 			credential=None):
@@ -674,6 +798,10 @@ class QrmiDriver(BaseDriver):
 		if type_name == "IQMServer":
 			settings, required = self._iqm_isa_settings(
 				backend, credential=credential)
+		elif type_name == "PasqalCloud":
+			kind = "PASQAL"
+			settings, required = self._pasqal_cloud_settings(
+				backend, credential=credential)
 		else:
 			kind = IBM_RESOURCE_ENV_KINDS.get(type_name)
 			if not kind:
@@ -744,7 +872,7 @@ class QrmiDriver(BaseDriver):
 
 		config = None
 		if hasattr(qrmi.QuantumResource, "from_config"):
-			# None means this driver resolves nothing for the type (Pasqal,
+			# None means this driver resolves nothing for the type (PasqalLocal,
 			# Alice & Bob), so the environment is still the only source and
 			# the fallback below is the right path for it.
 			config = self._resource_config(
@@ -794,6 +922,7 @@ class QrmiDriver(BaseDriver):
 			credential.get("user"),
 			credential.get("api_key") or credential.get("token"),
 			credential.get("service_crn"),
+			credential.get("project_id"),
 			credential.get("aws_access_key_id"),
 		)
 
@@ -859,10 +988,10 @@ class QrmiDriver(BaseDriver):
 				return entry
 		return {}
 
-	def _arch_raw(self):
+	def _arch_raw(self, credential=None):
 		# Map target() to the {static_architecture, dynamic_architecture} shape
 		# qhw-iqm's device/coupling normalizers expect.
-		target = self._target()
+		target = self._target(credential=credential)
 		raw = {"dynamic_architecture":
 				target.get("dynamic_quantum_architecture") or {}}
 		static = self._static_arch(target)
@@ -941,10 +1070,26 @@ class QrmiDriver(BaseDriver):
 				self._target().get("dynamic_quantum_architecture") or {},
 		}
 
-	def get_backend_info(self):
+	def get_backend_info(self, credential=None):
+		if self._provider() == "pasqal":
+			# target() is Pasqal Cloud's device-spec entries, read for each
+			# call rather than through the target cache, so a client builds
+			# against the current calibration. An emulator's are public; a
+			# QPU's need a login, the reservation's credential when the
+			# client names its reservation and the service's otherwise
+			# (_pasqal_cloud_settings).
+			try:
+				entries = json.loads(
+					self._qpu(credential=credential).target().value)
+			except Exception as exc:
+				raise self._qrmi_error(
+					exc, "failed to read QRMI target()") from exc
+			return pasqal_backend_info(
+				str(self._qc_alias(credential=credential) or "").split(",")[0],
+				entries)
 		if self._provider() == "ibm":
 			from qhw_ibm import normalize_device
-			target = self._target()
+			target = self._target(credential=credential)
 			target_config_json = target.get("configuration") or {}
 			if not target_config_json:
 				raise DEFwExecutionError("QRMI failed to retrieve the backend data")
@@ -969,7 +1114,7 @@ class QrmiDriver(BaseDriver):
 		# architecture is empty against QRMI older than 0.22.0, which did not
 		# report it at all.
 		from qhw_iqm import normalize_device
-		target = self._target()
+		target = self._target(credential=credential)
 		dynamic = target.get("dynamic_quantum_architecture") or {}
 		return {
 			"backend": self._descriptor.get("provider", "iqm"),
@@ -978,7 +1123,7 @@ class QrmiDriver(BaseDriver):
 			"active_qubits": dynamic.get("qubits") or [],
 			"calibration_set_id": dynamic.get("calibration_set_id"),
 			"qhw_device": normalize_device(
-					self._arch_raw(), device_id=self._device_id()),
+					self._arch_raw(credential), device_id=self._device_id()),
 		}
 
 	# --- execution: OpenQASM/QPY -> QRMI task lifecycle ----------------------
@@ -993,6 +1138,8 @@ class QrmiDriver(BaseDriver):
 		provider = self._provider()
 		if provider == "ibm":
 			return self._run_ibm_circuit(source)
+		if provider == "pasqal":
+			return self._run_pasqal_sequence(source)
 		return self._run_iqm_circuit(source)
 
 	def _run_ibm_circuit(self, source):
@@ -1045,15 +1192,20 @@ class QrmiDriver(BaseDriver):
 				"shim: QRMI task_logs for job %s failed: %s", job_id, exc)
 			return ""
 
-	def _run_sampler_payload(self, payload, source):
+	def _run_sampler_payload(self, payload, source, delete_finished=True,
+			default_timeout=DEFAULT_JOB_TIMEOUT_SECONDS):
 		# Submit the SamplerV2 payload via QRMI task_start -> poll to
 		# completion -> fetch task_result JSON. Time is measured along the way.
+		# delete_finished says whether task_stop deletes a finished task. It
+		# does not on Pasqal, where task_stop cancels the batch and Pasqal
+		# rejects cancelling a batch that has already ended. default_timeout
+		# is the provider deadline when neither the client nor the device
+		# sets one, None for none.
 		info = getattr(source, "info", None) or {}
 		credential = getattr(source, "provider_credential", None)
 		cid = source.get_cid() if hasattr(source, "get_cid") else info.get("cid")
 
 		shots = num_shots(info)
-		timeout = float(info.get("timeout", DEFAULT_JOB_TIMEOUT_SECONDS))
 		poll = float(info.get("poll_interval", 1.0))
 
 		# Set by the shim QRC when the QPM cancels this circuit. A cancel that
@@ -1062,6 +1214,23 @@ class QrmiDriver(BaseDriver):
 		if cancel_event is not None and cancel_event.is_set():
 			raise DEFwExecutionError(
 				"QRMI job was cancelled before it was submitted")
+
+		# A device whose provider queues jobs sets the wait with
+		# job-timeout-seconds, the key IBMQuantumSystem also hands QRMI as its
+		# job timeout. A timeout the client sends still wins. Reaching it
+		# stops the provider job (_poll_task).
+		timeout = info.get("timeout",
+			self._descriptor.get(JOB_TIMEOUT_KEY) or default_timeout)
+		# Checked before anything is submitted: a value _poll_task cannot
+		# read would otherwise fail with the job already at the provider.
+		if timeout is not None:
+			try:
+				timeout = float(timeout)
+			except (TypeError, ValueError):
+				raise DEFwExecutionError(
+					f"the job timeout must be a number of seconds, not "
+					f"{timeout!r} (job-timeout-seconds or the client's "
+					"timeout)") from None
 
 		timing = {}
 		start = time.monotonic()
@@ -1096,7 +1265,8 @@ class QrmiDriver(BaseDriver):
 			# full and to the caller as one line.
 			logs = self._task_logs(job_id, credential=credential)
 			# Nothing else to do with the failed job, we can delete it.
-			self._stop_task(job_id, credential=credential)
+			if delete_finished:
+				self._stop_task(job_id, credential=credential)
 			if logs:
 				logging.error(
 					"shim: QRMI job %s %s; provider logs:\n%s",
@@ -1124,7 +1294,8 @@ class QrmiDriver(BaseDriver):
 
 		# Nothing else to do with the completed task, we can delete it.
 		# The same behavior is implemented in QRMI's task_runner.
-		self._stop_task(job_id, credential=credential)
+		if delete_finished:
+			self._stop_task(job_id, credential=credential)
 
 		job = {"id": str(job_id), "status": "completed", "cid": cid,
 			   "timing": timing, "shots": shots}
@@ -1241,6 +1412,58 @@ class QrmiDriver(BaseDriver):
 		from qhw_iqm import normalize_result
 		return normalize_result(raw, device_id=self._device_id())
 
+	def _run_pasqal_sequence(self, source):
+		# Lifecycle: wrap the Pulser sequence as Payload.PasqalCloud -> submit,
+		# poll and fetch via _run_sampler_payload -> normalize the counter to
+		# qhw-result-v1. The sequence goes to Pasqal as the client wrote it,
+		# so there is nothing to transpile.
+		#
+		# Only PasqalCloud runs here. PasqalLocal, an on-premises QPU behind
+		# Warden, opens with the Slurm job's uid and id and runs in a session
+		# acquired for that job, and a shim service holds neither.
+		qrmi = self._resource()
+		type_name, _ = self._resource_type(qrmi)
+		if type_name != "PasqalCloud":
+			raise DEFwExecutionError(
+				f"the shim runs Pasqal devices through QRMI's PasqalCloud "
+				f"resource; {type_name} is not supported")
+		info = getattr(source, "info", None) or {}
+		credential = getattr(source, "provider_credential", None)
+		# Device discovery opens the resource without a project, as the
+		# emulators' specs are public, but a batch is always billed to one.
+		backend = str(self._qc_alias(credential=credential)).split(",")[0]
+		settings, _ = self._pasqal_cloud_settings(
+			backend, credential=credential)
+		if not (settings[PASQAL_CLOUD_PROJECT]
+				or settings.get(PASQAL_CONFIG_ROOT)):
+			raise self._missing_settings_error(
+				backend, [PASQAL_CLOUD_PROJECT], kind="PASQAL")
+		from util.circuit_payload import pulser_sequence
+		payload = qrmi.Payload.PasqalCloud(
+			sequence=pulser_sequence(info), job_runs=num_shots(info))
+		# A cloud QPU's queue can outlast any wait picked here, so the only
+		# provider deadline is the device's job-timeout-seconds, or the
+		# client's own. Without one the job runs until it ends, the client
+		# cancels it, or its reservation closes, which cancels it too.
+		result_json, job = self._run_sampler_payload(
+			payload, source, delete_finished=False, default_timeout=None)
+		if not result_json.get("counter"):
+			raise DEFwExecutionError(
+				f"Pasqal job {job.get('id')} returned no counts: "
+				f"{json.dumps(result_json)[:200]}")
+
+		from qhw_data import new_result
+		return (
+			new_result("pasqal", self._device_id(), job_status="completed")
+			.job(id=job.get("id"), status="completed")
+			.result(
+				shots=job.get("shots"),
+				num_circuits=1,
+				counts=result_json["counter"],
+				success=True)
+			.metadata({"source": "qrmi", "via": "qrmi.PasqalCloud"})
+			.build())
+
 	def _build_iqmjson(self, iqm_circuit, shots, calibration_set_id):
 		# Build an iqm-client RunRequest the same way QRMI's own Qiskit adapter
 		# (qrmi.qiskit_iqm) does, then serialize it: QRMI's task_start expects the
@@ -1281,8 +1504,9 @@ class QrmiDriver(BaseDriver):
 		# A cancel from the QPM (cancel_event, set by the shim QRC) or the
 		# timeout stops the provider job with task_stop, so it does not keep
 		# running after QFw has given up on it. The wait between polls ends as
-		# soon as a cancel arrives.
-		deadline = time.monotonic() + max(timeout, 0.0)
+		# soon as a cancel arrives. A timeout of None sets no deadline.
+		deadline = (None if timeout is None
+			else time.monotonic() + max(timeout, 0.0))
 		polls = 0
 		while True:
 			if cancel_event is not None and cancel_event.is_set():
@@ -1303,7 +1527,7 @@ class QrmiDriver(BaseDriver):
 				return "failed"
 			if "cancel" in state:
 				return "cancelled"
-			if time.monotonic() >= deadline:
+			if deadline is not None and time.monotonic() >= deadline:
 				stop_error = self._stop_task(job_id, credential=credential)
 				stopped = (
 					f"task_stop failed: {stop_error}" if stop_error

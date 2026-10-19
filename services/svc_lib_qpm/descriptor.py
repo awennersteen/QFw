@@ -73,6 +73,12 @@ def resolve_descriptor(device_id=None):
 		# Other providers ignore both settings.
 		"service_crn": device.get("service-crn"),
 		"iam_endpoint": device.get("iam-endpoint"),
+		# The Pasqal Cloud project a job is billed to when the user's
+		# credential DB entry names none. See drivers/qrmi_driver.py.
+		"project_id": device.get("project-id"),
+		# The device's API URL, which a Pasqal resource opens against when
+		# nothing more specific names one.
+		"url": device.get("url"),
 		# Device-owned object storage for QRMI's IBMQuantumSystem.
 		# Storage credentials stay in the credential DB.
 		"s3_endpoint": device.get("s3-endpoint"),

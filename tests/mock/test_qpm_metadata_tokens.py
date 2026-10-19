@@ -7,7 +7,8 @@ def test_qpm_telemetry_api_accepts_token_placeholders():
 	from api_qpm_telemetry import QPMTelemetry
 
 	expected_parameters = {
-		"get_backend_info": ["self", "lib", "token"],
+		# A Pulser client reads a Pasqal QPU's devices as its reservation.
+		"get_backend_info": ["self", "lib", "token", "reservation_id"],
 		"get_device_info": ["self", "lib", "token"],
 		"get_dynamic_backend_info": [
 			"self", "calibration_set_id", "lib", "token"],
