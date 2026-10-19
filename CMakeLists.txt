@@ -218,6 +218,11 @@ install(DIRECTORY backends/qfw_qiskit
 	FILES_MATCHING
 		PATTERN "*.py"
 		PATTERN "__pycache__" EXCLUDE)
+install(DIRECTORY backends/qfw_pulser
+	DESTINATION "${QFW_PYTHON_INSTALL_DIR}"
+	FILES_MATCHING
+		PATTERN "*.py"
+		PATTERN "__pycache__" EXCLUDE)
 install(DIRECTORY backends/qfw_telemetry
 	DESTINATION "${QFW_PYTHON_INSTALL_DIR}"
 	FILES_MATCHING
@@ -258,6 +263,7 @@ install(PROGRAMS
 	examples/qfw_job_stream.sh
 	examples/qfw_mpi_smoke.sh
 	examples/qfw_pennylane.sh
+	examples/qfw_pulser.sh
 	examples/qfw_qaoa.sh
 	examples/qfw_qiskit_simple.sh
 	examples/qfw_qiskit_vqe.sh

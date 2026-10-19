@@ -27,6 +27,9 @@ EXECUTION_CONTEXT_KEYS = (
 
 # The libraries a shim QPM can run a circuit through (svc_lib_qpm).
 SHIM_LIBRARIES = ("qrmi", "qdmi")
+# The shim library a job runs through when the program names none, so a batch
+# script can choose it for a program it does not edit.
+SHIM_LIB_ENV = "QFW_SHIM_LIB"
 
 
 def normalize_reservation_id(value):
@@ -82,6 +85,39 @@ def _runner_output_message(output):
 		if line.strip("-=*"):
 			return line[:300]
 	return None
+
+
+def failure_message(result):
+	# One line describing a circuit the QPM reports failed (rc != 0).
+	cid = result.get("cid", "unknown")
+	rc = result.get("rc")
+	output = result.get("result", {})
+	provider = None
+	error_type = None
+	message = None
+
+	if isinstance(output, dict):
+		for key, value in output.items():
+			if not isinstance(value, dict) or not value.get("error"):
+				continue
+			provider = str(key).upper()
+			error_type = value.get("error_type")
+			message = value.get("error")
+			break
+		if message is None:
+			message = output.get("error") or output.get("Error")
+	elif isinstance(output, str):
+		message = _runner_output_message(output)
+
+	details = [f"QFw circuit {cid} failed (rc={rc}"]
+	if provider:
+		details.append(f", provider={provider}")
+	if error_type:
+		details.append(f", error_type={error_type}")
+	details.append(")")
+	if message:
+		details.append(f": {message}")
+	return "".join(details)
 
 
 class QFwJob(Job):
@@ -277,37 +313,6 @@ class QFwJob(Job):
 			metadata["qhw_result"] = qhw_result
 		return metadata
 
-	def _failure_message(self, result):
-		cid = result.get("cid", "unknown")
-		rc = result.get("rc")
-		output = result.get("result", {})
-		provider = None
-		error_type = None
-		message = None
-
-		if isinstance(output, dict):
-			for key, value in output.items():
-				if not isinstance(value, dict) or not value.get("error"):
-					continue
-				provider = str(key).upper()
-				error_type = value.get("error_type")
-				message = value.get("error")
-				break
-			if message is None:
-				message = output.get("error") or output.get("Error")
-		elif isinstance(output, str):
-			message = _runner_output_message(output)
-
-		details = [f"QFw circuit {cid} failed (rc={rc}"]
-		if provider:
-			details.append(f", provider={provider}")
-		if error_type:
-			details.append(f", error_type={error_type}")
-		details.append(")")
-		if message:
-			details.append(f": {message}")
-		return "".join(details)
-
 	def _raise_for_failed_results(self, qpm_results):
 		failures = [
 			qr["res"] for qr in qpm_results
@@ -317,7 +322,7 @@ class QFwJob(Job):
 			return
 
 		self._status = JobStatus.ERROR
-		messages = [self._failure_message(result) for result in failures]
+		messages = [failure_message(result) for result in failures]
 		raise JobError("; ".join(messages))
 
 	def _build_statevector(self, payload, cid=None):

@@ -176,6 +176,36 @@ def test_shim_example_uses_no_secret_credential_provider():
 
 # --- select_qpu(): the fix site --------------------------------------------
 
+@pytest.mark.parametrize("device_id,provider_device_id", [
+	("pasqal-emu-free", "EMU_FREE"),
+	("pasqal-fresnel", "FRESNEL"),
+])
+def test_pulser_example_devices_reach_the_driver(
+		monkeypatch, device_id, provider_device_id):
+	# The config qfw_pulser.sh builds: its project filled in, read the way
+	# the shim service reads it.
+	text = (REPO_ROOT / "examples" / "qfw_pulser_device_access.yaml") \
+		.read_text(encoding="utf-8") \
+		.replace("QFW_PASQAL_PROJECT_ID", "proj")
+	manifest = yaml.safe_load(
+		(REPO_ROOT / "examples" / "qfw_pulser_services.yaml")
+		.read_text(encoding="utf-8"))
+	descriptor = _load_descriptor()
+	monkeypatch.setattr(
+		device_access, "device_access_config_path", lambda: "cfg.yaml")
+	monkeypatch.setattr(
+		device_access, "load_yaml_config", lambda path: yaml.safe_load(text))
+
+	resolved = descriptor.resolve_descriptor(device_id)
+
+	assert manifest["services"][0]["credential-mode"] == "no-secret"
+	assert resolved["provider"] == "pasqal"
+	assert resolved["provider_device_id"] == provider_device_id
+	assert resolved["resource_type"] == "PasqalCloud"
+	assert resolved["libraries"] == ["qrmi"]
+	assert resolved["project_id"] == "proj"
+
+
 def test_select_qpu_passes_through_descriptor_fields(monkeypatch):
 	monkeypatch.delenv(device_access.QPU_DEVICE_ENV, raising=False)
 	selected = device_access.select_qpu(
