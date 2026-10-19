@@ -19,6 +19,13 @@ QPM_PROVIDER_SELECTIONS = {
 		"qpm_type": QPMType.QPM_TYPE_HARDWARE,
 		"qpm_capabilities": QPMCapability.QPM_CAP_SUPERCONDUCTING,
 	},
+	# A shim QPM serving a neutral-atom device. The Pulser client also checks
+	# the QPM reads Pulser sequences (circuit_formats).
+	"pasqal": {
+		"provider": "shim",
+		"qpm_type": QPMType.QPM_TYPE_HARDWARE,
+		"qpm_capabilities": QPMCapability.QPM_CAP_NEUTRAL_ATOM,
+	},
 	"nwqsim": {
 		"provider": "nwqsim",
 		"qpm_type": QPMType.QPM_TYPE_SIMULATOR,

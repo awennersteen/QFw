@@ -169,7 +169,10 @@ a site service has no other way to receive. An IBM device carries
 `resource-type`, `service-crn`, `iam-endpoint` and the object storage fields.
 An Amazon Braket device carries its device ARN as `provider-device-id`, the
 stable QDMI catalogue id as `qdmi-device-id`, and optionally `aws-region`,
-`s3-results-uri` and a Braket Direct `reservation-arn`. Any device can carry
+`s3-results-uri` and a Braket Direct `reservation-arn`. A Pasqal device
+carries its device name as `provider-device-id`, `resource-type: PasqalCloud`
+and a default Pasqal Cloud `project-id` ([Pulser programs](pulser-programs.md)).
+Any device can carry
 `num-qubits`, for the directory record a service publishes before a session
 opens, and `max-shots`, a cap the driver refuses above. None of these is a
 secret.
@@ -543,7 +546,7 @@ implements this.
 
 | Property | Meaning |
 | --- | --- |
-| `circuit_formats` | Formats the QPM reads, preferred first. Every QPM declares at least `openqasm2`. |
+| `circuit_formats` | Formats the QPM reads, preferred first. A QPM that declares nothing reads `openqasm2`. |
 | `qpy_version` | For a QPM that reads `qpy`, the newest QPY format version its Qiskit loads. |
 
 The circuit travels in the circuit info as
@@ -564,6 +567,10 @@ milliseconds against about 20 for writing the QPY at all.
 
 A payload is read back as the format of its content, so `qpy+gzip` arrives as
 QPY with the gzip already removed and every consumer handles one QPY.
+
+`pulser-abstract-repr` carries a Pulser sequence rather than a circuit. Only a
+QPM that runs Pulser sequences declares it, and a Pasqal QPM declares it alone;
+see [Pulser programs on Pasqal devices](pulser-programs.md).
 
 QPY is Qiskit's own serialization, and it is lossless for Qiskit circuits.
 OpenQASM 2 cannot carry control flow, unbound parameters, gates such as `ecr`,
