@@ -238,6 +238,37 @@ def test_get_qpm_selects_requested_provider(monkeypatch):
 	result.lifecycle_binding.close()
 
 
+def test_get_qpm_connects_the_named_service_without_reservations(monkeypatch):
+	# Two services fit the lookup and no reservation is exported, so the
+	# service the caller names is the one connected, not an ambiguity.
+	import qfw_qiskit.qfw_lookup_service as lookup_service
+
+	first = qpm_directory_record("iqm-a", FakeQPM(), provider="iqm")
+	second = qpm_directory_record("iqm-b", FakeQPM(), provider="iqm")
+	dirsvc = FakeDirectoryService([first, second])
+	fake_defw = BindingDefwModule([first, second])
+
+	monkeypatch.delenv("QFW_RESERVATIONS", raising=False)
+	monkeypatch.setenv("QFW_QPM_IMPL", "iqm")
+	monkeypatch.setattr(
+		lookup_service, "defw_get_directory_service",
+		lambda timeout=None: dirsvc)
+	monkeypatch.setattr(lookup_service, "defw", fake_defw)
+
+	result = lookup_service.get_qpm(
+		qpm_type=DEFAULT_QPM_TYPE,
+		qpm_capabilities=DEFAULT_QPM_CAPABILITIES,
+		service_id="iqm-b",
+	)
+
+	assert result.test() == "ok"
+	assert [
+		item["service_record"]["service_id"]
+		for item in fake_defw.binding_connections
+	] == ["iqm-b"]
+	result.lifecycle_binding.close()
+
+
 def test_get_qpm_rejects_unavailable_requested_provider(monkeypatch):
 	import qfw_qiskit.qfw_lookup_service as lookup_service
 	from qfw_qiskit.qpm_resolver import QPMProviderPolicyError

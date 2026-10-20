@@ -54,6 +54,8 @@ def _connect_qpm(dirsvc, qpm_type, qpm_capabilities,
 	}
 	if want:
 		request["provider"] = want
+	if service_id:
+		request["service_id"] = service_id
 	resolved = resolver.resolve(**request)
 	lifecycle_binding = resolver.managed_binding(resolved)
 	client = lifecycle_binding.api(
