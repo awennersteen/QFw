@@ -433,6 +433,11 @@ qfw_example_finish() {
 	      -f "${QFW_EXAMPLE_SITE_CONFIG}" ]]; then
 		rm -f "${QFW_EXAMPLE_SITE_CONFIG}"
 	fi
+	# Inputs an example generated for itself, such as a copy of its service
+	# manifest, registered with QFW_EXAMPLE_TEMP_FILES+=(path).
+	if [[ -n "${QFW_EXAMPLE_TEMP_FILES[*]:-}" ]]; then
+		rm -f "${QFW_EXAMPLE_TEMP_FILES[@]}"
+	fi
 	local now duration status
 	now="$(date +%s)"
 	duration=$((now - QFW_EXAMPLE_START_EPOCH))

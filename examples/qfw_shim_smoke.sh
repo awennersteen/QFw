@@ -96,10 +96,10 @@ echo "Starting QFw shim smoke test with ${libs:+libs=${libs} }${lib:+lib=${lib}}
 qfw_example_begin "shim-smoke" "$@"
 QFW_EXAMPLE_SITE_CONFIG="$(qfw_example_make_site_config \
 	"$(qfw_example_path qfw_shim_device_access.yaml)")"
+shim_manifest="$(shim_manifest_for_device "${device_id}")"
+QFW_EXAMPLE_TEMP_FILES+=("${shim_manifest}")
 QFW_SITE_CONFIG="${QFW_EXAMPLE_SITE_CONFIG}" \
-	qfw_example_setup_local_services \
-		"$(shim_manifest_for_device "${device_id}")" \
-		shim-ornl-20q
+	qfw_example_setup_local_services "${shim_manifest}" shim-ornl-20q
 DEFW_ONLY_LOAD_MODULE=api_qpm_execution,api_qpm_telemetry,api_qpm_control \
 	QFW_SHIM_SMOKE_SHUTDOWN_QPM=no \
 	qfw_example_slurm_driver \
