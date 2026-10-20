@@ -369,6 +369,46 @@ def test_a_qrmi_without_from_config_cannot_open_pasqal_cloud():
 			credential={"token": "alice-tok"})
 
 
+@pytest.mark.parametrize("type_name,alias,settings", (
+	("IQMServer", "default", {
+		"QRMI_IQM_ISA_ENDPOINT": "https://iqm.example",
+		"QRMI_IQM_ISA_TOKEN": "spank-tok",
+	}),
+	("IBMQiskitRuntimeService", BACKEND, {
+		"QRMI_IBM_QRS_ENDPOINT": "https://qrs.example",
+		"QRMI_IBM_QRS_IAM_APIKEY": "operator-key",
+		"QRMI_IBM_QRS_SERVICE_CRN": "crn:operator",
+	}),
+))
+@pytest.mark.parametrize("credential", (
+	{"reservation_id": 7},
+	{"reservation_id": 7, "user": "alice", "device_id": "dev"},
+), ids=("no-secret", "entitlement"))
+def test_a_reservation_credential_without_a_key_keeps_the_environment(
+		type_name, alias, settings, credential):
+	# Every circuit's credential carries its reservation id. The no-secret
+	# provider's carries nothing else, and the entitlement provider's a user
+	# but no key. Neither names an identity to open with, so the settings
+	# SPANK or the operator put in the environment still apply, exactly as
+	# without a credential, even with no device access to fall back to.
+	backend = alias.split(",")[0]
+	for key, value in settings.items():
+		os.environ[f"{backend}_{key}"] = value
+	driver = QrmiDriver({"provider": type_name[:3].lower()})
+
+	def no_device_access(credential=None):
+		raise DEFwExecutionError("no device access configured")
+
+	driver._access = no_device_access
+
+	bare = driver._resource_config(type_name, alias)
+	reserved = driver._resource_config(
+		type_name, alias, credential=credential)
+
+	assert reserved == bare
+	assert settings.items() <= reserved.items()
+
+
 def test_the_map_carries_settings_the_driver_does_not_model(monkeypatch):
 	# QRMI ignores the environment once a map is given, and it reads more than
 	# this driver resolves. The SPANK plugin sets the acquisition token and

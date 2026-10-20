@@ -209,6 +209,19 @@ _QRMI_ERROR_MAP = (
 )
 
 
+def _identifies_caller(credential):
+	# Whether a credential names whose access the resource opens with: a key,
+	# or, outside a reservation, the user whose key _access looks up. Only
+	# then does it replace the settings the environment holds. Every
+	# circuit's credential carries its reservation id: the no-secret
+	# provider's nothing else, the entitlement provider's a user but no key.
+	# Neither names an identity to open with, so SPANK's and the operator's
+	# settings still apply.
+	credential = credential or {}
+	return bool(credential.get("api_key") or credential.get("token")
+		or (credential.get("user") and not credential.get("reservation_id")))
+
+
 def _status_str(status):
 	# QRMI task_status returns a TaskStatus enum; reduce it to a lowercase
 	# string regardless of whether the binding exposes .name/.value/repr.
@@ -405,14 +418,14 @@ class QrmiDriver(BaseDriver):
 		# so resolve them from device-access config instead.
 		#
 		# A value already in the environment wins, so nothing here overrides
-		# what the SPANK plugin set. A credential replaces what it supplies and
-		# leaves the rest, which is why an unsupplied half falls back to the
-		# environment rather than being cleared.
+		# what the SPANK plugin set. A credential naming the caller replaces
+		# what it supplies and leaves the rest, which is why an unsupplied half
+		# falls back to the environment rather than being cleared.
 		endpoint_key = "QRMI_IQM_ISA_ENDPOINT"
 		token_key = "QRMI_IQM_ISA_TOKEN"
 		endpoint = os.environ.get(f"{backend}_{endpoint_key}")
 		token = os.environ.get(f"{backend}_{token_key}")
-		if credential:
+		if _identifies_caller(credential):
 			access = self._access(credential=credential)
 			return {
 				endpoint_key: access.get("base_url") or endpoint,
@@ -577,7 +590,7 @@ class QrmiDriver(BaseDriver):
 
 		settings = {}
 		access = {}
-		if credential:
+		if _identifies_caller(credential):
 			# No fallback on this path. A credential that cannot be resolved
 			# has to fail rather than leave another reservation's endpoint or
 			# key in place.
@@ -609,7 +622,7 @@ class QrmiDriver(BaseDriver):
 			or access.get("service_crn")
 			or self._descriptor.get("service_crn")
 			or self._descriptor.get("service-crn"))
-		if credential:
+		if _identifies_caller(credential):
 			# Resolved for every reservation and cleared when nothing supplies
 			# one, like the endpoint and key. A CRN can belong to the user, so
 			# keeping the value already set would run this reservation under
@@ -749,7 +762,7 @@ class QrmiDriver(BaseDriver):
 				credential.get(key)
 				or os.environ.get(env_name)
 				or access.get(key))
-			if not credential:
+			if not _identifies_caller(credential):
 				settings[setting_key] = (
 					os.environ.get(f"{backend}_{setting_key}")
 					or (str(value) if value else None))
