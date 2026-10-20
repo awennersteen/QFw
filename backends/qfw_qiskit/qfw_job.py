@@ -88,7 +88,7 @@ def _runner_output_message(output):
 
 
 def failure_message(result):
-	# One line describing a circuit the QPM reports failed (rc != 0).
+	# One line describing a circuit the QPM reports failed or cancelled.
 	cid = result.get("cid", "unknown")
 	rc = result.get("rc")
 	output = result.get("result", {})
@@ -108,6 +108,16 @@ def failure_message(result):
 			message = output.get("error") or output.get("Error")
 	elif isinstance(output, str):
 		message = _runner_output_message(output)
+	if message is None:
+		# A task the QPM fails itself has no rc or result: its cause is
+		# under "error" (controller._fail_scheduled_task_locked).
+		error = result.get("error")
+		if isinstance(error, dict):
+			error_type = error_type or error.get("error_type")
+			error = error.get("error")
+		message = ": ".join(str(part) for part in (
+			result.get("reason"), error or result.get("message"))
+			if part)
 
 	details = [f"QFw circuit {cid} failed (rc={rc}"]
 	if provider:
@@ -317,6 +327,7 @@ class QFwJob(Job):
 		failures = [
 			qr["res"] for qr in qpm_results
 			if qr["res"].get("rc") not in (None, 0)
+			or qr["res"].get("outcome") in ("FAILED", "CANCELLED")
 		]
 		if not failures:
 			return

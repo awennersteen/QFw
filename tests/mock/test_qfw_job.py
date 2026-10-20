@@ -251,6 +251,78 @@ def test_qfw_job_result_raises_job_error_for_provider_failure(monkeypatch):
 	assert len(backend.logged_results) == 1
 
 
+def test_qfw_job_result_raises_job_error_for_a_qpm_side_failure(monkeypatch):
+	# A task the QPM itself fails, before or around the provider, completes
+	# with outcome FAILED and the cause under "error", and no rc or result
+	# (controller._fail_scheduled_task_locked).
+	import qfw_qiskit.qfw_job as qfw_job
+	from tests.mock.fakes import FakeEvent
+
+	fake_qpm = FakeQPM(cids=["cid-failed"])
+	circuit = qfw_job.QuantumCircuit(1, name="qpm-failure")
+	backend = FakeBackend()
+	event_api = FakeEventAPI(events=[FakeEvent({
+		"cid": "cid-failed",
+		"outcome": "FAILED",
+		"reason": "provider-submission-failed",
+		"error": {
+			"reason": "provider-submission-failed",
+			"error": "401 Unauthorized",
+			"error_type": "DEFwExecutionError",
+		},
+		"completion_ready": True,
+		"cq_enqueue_time": 1.5,
+		"cq_dequeue_time": -1,
+	})], fd=44)
+	options = _driver_options(shots=2, seed=7, seed_simulator=13)
+
+	monkeypatch.setattr(
+		qfw_job.select, "select", lambda readable, *_: (readable, [], []))
+	_stub_qasm(monkeypatch)
+
+	job = qfw_job.QFwJob(backend, fake_qpm, event_api, circuit, options)
+	job.submit()
+
+	with pytest.raises(qfw_job.JobError) as exc_info:
+		job.result()
+
+	message = str(exc_info.value)
+	assert "cid-failed" in message
+	assert "provider-submission-failed" in message
+	assert "error_type=DEFwExecutionError" in message
+	assert "401 Unauthorized" in message
+	assert job.status() == qfw_job.JobStatus.ERROR
+
+
+def test_qfw_job_result_raises_job_error_for_a_cancelled_task(monkeypatch):
+	# A task cancelled by the QPM, for instance when its reservation is
+	# released, completes with outcome CANCELLED and a reason, and no rc,
+	# result or timing (controller._task_status_locked).
+	import qfw_qiskit.qfw_job as qfw_job
+	from tests.mock.fakes import FakeEvent
+
+	fake_qpm = FakeQPM(cids=["cid-cancelled"])
+	circuit = qfw_job.QuantumCircuit(1, name="qpm-cancel")
+	event_api = FakeEventAPI(events=[FakeEvent({
+		"cid": "cid-cancelled",
+		"outcome": "CANCELLED",
+		"reason": "reservation-released",
+		"completion_ready": True,
+	})], fd=44)
+	options = _driver_options(shots=2, seed=7, seed_simulator=13)
+
+	monkeypatch.setattr(
+		qfw_job.select, "select", lambda readable, *_: (readable, [], []))
+	_stub_qasm(monkeypatch)
+
+	job = qfw_job.QFwJob(FakeBackend(), fake_qpm, event_api, circuit, options)
+	job.submit()
+
+	with pytest.raises(qfw_job.JobError, match="reservation-released"):
+		job.result()
+	assert job.status() == qfw_job.JobStatus.ERROR
+
+
 def test_qfw_job_result_names_the_circuit_runner_failure(monkeypatch):
 	# A simulator QPM reports a runner that exited non-zero as its output in
 	# a "{result: ...}" string. The client used to show only the rc, and an
