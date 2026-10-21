@@ -96,10 +96,14 @@ def _measure_lines(program):
 
 
 def _library_keys(program, values):
-	# What the device library would make of one ideal shot, for a backend
-	# that orders result columns by qubit index (SV1) and for one that orders
-	# them by classical register (Rigetti). The library reverses each row as
-	# it comes, without reading measuredQubits (DeviceParser.cpp).
+	# What a device library would make of one ideal shot, for a backend that
+	# orders result columns by qubit index (SV1) and for one that orders them
+	# by classical register (Rigetti). Modelled on amazon-braket-qdmi 1.3.0,
+	# which reversed each row as it came without reading measuredQubits. 1.3.1
+	# reads it and keys by qubit index everywhere, so the two orders below now
+	# agree at the library too. They are both kept: the point of the canonical
+	# measurement block is that QFw does not depend on which one a library
+	# picks.
 	pairs = [
 		(int(re.search(r"c\[(\d+)\]", line).group(1)),
 			int(re.search(r"q\[(\d+)\]", line).group(1)))
