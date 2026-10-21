@@ -516,14 +516,61 @@ def _install_qiskit_stubs():
 
 	transpiler = types.ModuleType("qiskit.transpiler")
 
+	class InstructionProperties:
+		def __init__(self, duration=None, error=None, **kwargs):
+			self.duration = duration
+			self.error = error
+
+		def __repr__(self):
+			return (f"InstructionProperties(duration={self.duration}, "
+				f"error={self.error})")
+
+	class CouplingMap:
+		def __init__(self, edges=None):
+			self._edges = sorted(edges or [])
+
+		def get_edges(self):
+			return list(self._edges)
+
 	class Target:
+		# Enough of qiskit.transpiler.Target for the client's target
+		# builders: what was added, on which qargs, with which properties.
 		def __init__(self, description=None, num_qubits=0, **kwargs):
 			self.description = description
 			self.num_qubits = num_qubits
 			self.operation_names = set()
+			self.qubit_properties = kwargs.get("qubit_properties")
+			self._instructions = {}
 
 		def add_instruction(self, instruction, properties=None, name=None):
-			self.operation_names.add(name or instruction.name)
+			name = name or instruction.name
+			if name in self.operation_names:
+				raise ValueError(f"Instruction {name} is already in the target")
+			self.operation_names.add(name)
+			self._instructions[name] = (
+				instruction,
+				None if properties is None else dict(properties))
+
+		def __getitem__(self, name):
+			properties = self._instructions[name][1]
+			return {None: None} if properties is None else properties
+
+		def operation_from_name(self, name):
+			return self._instructions[name][0]
+
+		def qargs_for_operation_name(self, name):
+			properties = self._instructions[name][1]
+			return None if properties is None else set(properties)
+
+		def build_coupling_map(self):
+			edges = {
+				qargs
+				for _instruction, properties in self._instructions.values()
+				if properties
+				for qargs in properties
+				if len(qargs) == 2
+			}
+			return CouplingMap(edges) if edges else None
 
 	class PassManager:
 		def __init__(self, passes=None):
@@ -535,6 +582,8 @@ def _install_qiskit_stubs():
 			return type("Config", (), {"basis_gates": []})()
 
 	transpiler.Target = Target
+	transpiler.InstructionProperties = InstructionProperties
+	transpiler.CouplingMap = CouplingMap
 	transpiler.PassManager = PassManager
 	transpiler.PassManagerConfig = PassManagerConfig
 	qiskit.transpiler = transpiler
@@ -550,25 +599,53 @@ def _install_qiskit_stubs():
 	passes_mod.Optimize1qGatesDecomposition = Optimize1qGatesDecomposition
 	sys.modules["qiskit.transpiler.passes"] = passes_mod
 
+	class Parameter:
+		def __init__(self, name):
+			self.name = name
+
+	class Gate:
+		# An opaque gate: a name, a width and parameters, as
+		# qiskit.circuit.Gate(name, num_qubits, params).
+		def __init__(self, name, num_qubits, params=None, label=None):
+			self.name = name
+			self.num_qubits = num_qubits
+			self.params = list(params or [])
+			self.label = label
+
 	circuit_mod = types.ModuleType("qiskit.circuit")
 	circuit_mod.QuantumCircuit = QuantumCircuit
 	circuit_mod.ClassicalRegister = ClassicalRegister
 	circuit_mod.QuantumRegister = QuantumRegister
-	circuit_mod.Measure = type("Measure", (), {"name": "measure"})
-	circuit_mod.Reset = type("Reset", (), {"name": "reset"})
+	circuit_mod.Measure = type("Measure", (), {"name": "measure", "num_qubits": 1})
+	circuit_mod.Reset = type("Reset", (), {"name": "reset", "num_qubits": 1})
+	circuit_mod.Gate = Gate
+	circuit_mod.Parameter = Parameter
 	sys.modules["qiskit.circuit"] = circuit_mod
 
 	library_mod = types.ModuleType("qiskit.circuit.library")
 
 	class _Gate:
 		name = None
+		num_qubits = 1
 
 		def __init__(self, *args, **kwargs):
 			self.args = args
 			self.kwargs = kwargs
 
+	_two_qubit_gates = {
+		"ch", "cs", "csx", "csdg", "cu", "cx", "cy", "cz", "cp", "crx",
+		"cry", "crz", "rxx", "ryy", "rzz", "swap",
+	}
+	_three_qubit_gates = {"ccx", "cswap"}
+
 	def _gate_class(class_name, gate_name):
-		return type(class_name, (_Gate,), {"name": gate_name})
+		num_qubits = 1
+		if gate_name in _two_qubit_gates:
+			num_qubits = 2
+		elif gate_name in _three_qubit_gates:
+			num_qubits = 3
+		return type(class_name, (_Gate,), {
+			"name": gate_name, "num_qubits": num_qubits})
 
 	for class_name, gate_name in {
 		"CCXGate": "ccx",

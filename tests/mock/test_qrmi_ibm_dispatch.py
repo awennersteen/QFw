@@ -342,6 +342,9 @@ def test_get_backend_info_ibm_returns_composite_shape(monkeypatch):
 	assert result["backend"] == "ibm"
 	assert result["metadata_supported"] is True
 	assert result["static_architecture"] == config
+	# The raw properties ride along, so a client can build the same ISA
+	# target _build_backend_target does.
+	assert result["backend_properties"] == _PROPS
 	assert result["active_qubits"] == [0, 1, 2]
 	assert result["calibration_set_id"] is None
 	assert result["qhw_device"] == {"qubits": [0, 1, 2]}

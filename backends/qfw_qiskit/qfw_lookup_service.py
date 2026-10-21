@@ -12,6 +12,11 @@ from .reservation_set import (
 	select_qpm_reservation,
 )
 
+# The API bindings a QPM publishes that the Qiskit client binds: execution
+# for the circuits, telemetry for the device (api_qpm_telemetry).
+EXECUTION_BINDING = "execution"
+TELEMETRY_BINDING = "telemetry"
+
 
 def _with_declared_properties(client, resolved):
 	# Keep the QPM's declared directory properties on the client, so a job can
@@ -38,12 +43,12 @@ def _connect_qpm(dirsvc, qpm_type, qpm_capabilities,
 			selected.service_id,
 			selected.reservation_id,
 			timeout=timeout,
-			binding_name="execution")
+			binding_name=EXECUTION_BINDING)
 		return (_with_declared_properties(binding.client, binding.resolved),
 			binding.reservation_id)
 	request = {
 		"timeout": timeout,
-		"binding_name": "execution",
+		"binding_name": EXECUTION_BINDING,
 		"qpm_type": qpm_type,
 		"qpm_capabilities": qpm_capabilities,
 	}
@@ -74,3 +79,19 @@ def get_qpm(qpm_type=-1, qpm_capabilities=-1, timeout=SYSTEM_UP_TIMEOUT,
 	if return_reservation:
 		return qpm_api, reservation_id
 	return qpm_api
+
+
+def get_qpm_telemetry(qpm_api):
+	# The telemetry API of the QPM behind an execution client, bound next to
+	# it. get_qpm() returns a managed binding: its lifecycle binding holds
+	# the directory's service record, which lists every API the QPM
+	# publishes, so the telemetry API is selected from that same record and
+	# follows the same runtime, reconnecting with it. A client that is not a
+	# managed binding (a bare proxy, a test fake) has no telemetry: None.
+	lifecycle_binding = getattr(qpm_api, "lifecycle_binding", None)
+	api = getattr(lifecycle_binding, "api", None)
+	if not callable(api):
+		return None
+	return api(
+		TELEMETRY_BINDING,
+		expected_runtime_id=getattr(qpm_api, "expected_runtime_id", None))
