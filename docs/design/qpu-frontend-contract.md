@@ -477,10 +477,12 @@ driver resolves connection settings from the same source as the native service
 and reads QRMI's own resource environment (populated by the SPANK plugin inside
 a reservation; `target()` itself is not reservation-bound).
 
-`get_backend_info` and `get_dynamic_backend_info` are wired on QRMI (a native
-composite / the dynamic architecture, from `target()`); they stay QRMI-only for
-now because their shape carries raw IQM architecture data QDMI's neutral model
-does not expose.
+`get_backend_info` is wired on both libraries: QRMI returns the native
+composite from `target()`, with the provider's static architecture; QDMI
+returns the same composite from the device topology, with the qhw device
+record embedded and an empty static architecture, so a QDMI-only resource
+describes itself. `get_dynamic_backend_info` stays QRMI-only, because its shape
+is the raw IQM dynamic architecture, which QDMI's neutral model does not expose.
 
 Execution is implemented on QRMI: `run_circuit` takes the circuit in a
 declared format (QPY or OpenQASM 2, see "Circuit formats" below), transcodes

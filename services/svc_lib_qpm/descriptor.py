@@ -8,7 +8,7 @@ DEFAULT_CAPS = {
 	"get_coupling_graph": ["qdmi", "qrmi"],
 	"get_calibration_snapshot": ["qdmi", "qrmi"],
 	"get_dynamic_backend_info": ["qrmi"],
-	"get_backend_info": ["qrmi"],
+	"get_backend_info": ["qdmi", "qrmi"],
 	# Execution is composable for the QRMI-vs-QDMI comparison: no lib routes to
 	# the execution owner (qrmi); --lib qdmi runs the same circuit through QDMI.
 	"run_circuit": ["qrmi", "qdmi"],

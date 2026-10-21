@@ -357,6 +357,12 @@ def _op_metric(op, attr, locus_sites):
 		return None
 
 
+def calibration_set_id(device, slot=_CALIBRATION_SET_ID_SLOT):
+	"""The provider's calibration set id from the device's custom slot, or
+	None when the provider publishes none (slot None) or the query fails."""
+	return _calibration_set_id(device, slot)
+
+
 def _calibration_set_id(device, slot=_CALIBRATION_SET_ID_SLOT):
 	# Read the provider's calibration set identifier out of the vendor custom
 	# property slot (see _CALIBRATION_SET_ID_SLOT). Needs MQT Core >= 3.8 for

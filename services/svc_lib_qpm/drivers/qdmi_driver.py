@@ -3,7 +3,8 @@
 # The packaged provider adapters own registration, catalogue defaults and
 # session parameters through MQT Core's QDMI driver. QFw retains its resource
 # policy, qhw records and interruptible job wait.
-# Backend metadata that carries raw IQM architecture data stays with QRMI.
+# The dynamic backend info, raw IQM architecture data, stays with QRMI; the
+# backend-info composite is served here from the device topology.
 
 from .base_driver import BaseDriver, JobRecords, reservation_cache_key
 from .qdmi_profiles import profile_for
@@ -29,6 +30,7 @@ def _job_status(status):
 class QdmiDriver(BaseDriver):
 	name = "qdmi"
 	CAPABILITIES = frozenset({
+		"get_backend_info",
 		"get_device_info",
 		"get_coupling_graph",
 		"get_calibration_snapshot",
@@ -135,6 +137,30 @@ class QdmiDriver(BaseDriver):
 				self._descriptor.get("id", "iqm-device"))
 
 	# --- introspection facet: QDMI Device -> qhw (section 13 milestone) ---
+
+	def get_backend_info(self):
+		# The composite the QRMI driver returns for a device that is not IBM
+		# (and the native svc_iqm_qpm): the provider, that metadata is
+		# served, the active qubits and the embedded qhw device record, so a
+		# client leading with this call gets a device from a QDMI-only
+		# resource too. QDMI has no raw provider architecture to put under
+		# static_architecture, so that key is empty, as it is for a QRMI too
+		# old to report one. The calibration set id is the provider's, read
+		# from its custom slot the way the calibration snapshot reads it.
+		provider, device_id = self._ids()
+		device = self._device()
+		topo = fomac_normalize.extract_topology(device)
+		return {
+			"backend": provider,
+			"metadata_supported": True,
+			"static_architecture": {},
+			"active_qubits": list(topo.get("qubits") or []),
+			"calibration_set_id": fomac_normalize.calibration_set_id(
+				device, self._profile.calibration_set_slot),
+			"qhw_device": fomac_normalize.to_device_record(
+				topo, provider, device_id,
+				technology=self._profile.technology()),
+		}
 
 	def get_device_info(self):
 		provider, device_id = self._ids()

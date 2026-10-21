@@ -245,7 +245,9 @@ reports `metadata_supported: true` for a machine with a device to describe,
 and `get_device_info()`, `get_coupling_graph()` and
 `get_calibration_snapshot()` are read as qhw records: the qubits, the coupling
 edges, the native operations with their loci, and the errors and durations per
-locus. For an IBM resource the backend-info record also carries the raw
+locus. The QRMI and the QDMI driver both serve these four calls, so a machine
+wired for one library only, such as a Braket entry on QDMI, describes itself
+from that library. For an IBM resource the backend-info record also carries the raw
 `BackendConfiguration` (`static_architecture`) and `BackendProperties`
 (`backend_properties`), which the client converts the way the driver's own ISA
 compilation does. A machine therefore supports target-aware transpilation once

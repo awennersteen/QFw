@@ -564,3 +564,92 @@ def test_configuration_reflects_the_device_target(monkeypatch):
 		[0, 1], [1, 0], [1, 2], [2, 1], [2, 3], [3, 2]]
 	assert "cx" in configuration["basis_gates"]
 	assert "ccx" not in configuration["basis_gates"]
+
+
+def qdmi_records():
+	# The shim's records for a three-qubit device read through QDMI: the
+	# driver's get_backend_info composite with the fomac device record
+	# embedded, the coupling record with the native operations and their
+	# loci, and the calibration snapshot with the qdmi.fomac.v1 metrics.
+	qubits = ["QB1", "QB2", "QB3"]
+	device = {
+		"schema": "qhw-device-v1",
+		"provider": "iqm",
+		"device": {"id": "ornl-3q", "num_qubits": 3,
+			   "technology": "superconducting"},
+		"qubits": [
+			{"id": qubit, "index": index}
+			for index, qubit in enumerate(qubits)],
+		"metadata": {"source": "qdmi", "via": "mqt.core.qdmi"},
+	}
+	info = {
+		"backend": "iqm",
+		"metadata_supported": True,
+		"static_architecture": {},
+		"active_qubits": qubits,
+		"calibration_set_id": "cal-set-1",
+		"qhw_device": device,
+	}
+	single = [[qubit] for qubit in qubits]
+	coupling = {
+		"schema": "qhw-coupling-v1",
+		"provider": "iqm",
+		"device": {"id": "ornl-3q", "num_qubits": 3},
+		"coupling": {"directed": False, "nodes": qubits,
+			     "edges": [["QB1", "QB2"], ["QB2", "QB3"]]},
+		"operations": [
+			{"name": "barrier", "arity": 0, "supported_loci": [[]]},
+			{"name": "cz", "arity": 2,
+			 "supported_loci": [["QB1", "QB2"], ["QB2", "QB3"]]},
+			{"name": "measure", "arity": 1, "supported_loci": single},
+			{"name": "prx", "arity": 1, "supported_loci": single},
+		],
+	}
+	calibration = {
+		"schema": "qhw-calibration-v1",
+		"provider": "iqm",
+		"device": {"id": "ornl-3q"},
+		"calibration": {"calibration_set_id": "cal-set-1"},
+		"extensions": {"qdmi.fomac.v1": {
+			"duration_unit": "ns",
+			"gate_metrics": [
+				{"operation": "cz", "locus": ["QB1", "QB2"],
+				 "fidelity": 0.995, "duration": 60.0},
+				{"operation": "prx", "locus": ["QB1"],
+				 "fidelity": 0.9995, "duration": 16.0},
+			],
+			"qubit_metrics": [{"qubit": "QB1", "t1": 50000.0, "t2": 20000.0}],
+		}},
+	}
+	return info, device, coupling, calibration
+
+
+def test_target_through_qdmi_records_with_the_qdmi_library(monkeypatch):
+	# A backend set to the shim's QDMI library asks every telemetry call
+	# through it and builds the target from the QDMI driver's composite
+	# and records: the native gates on their loci, the fomac metrics.
+	info, device, coupling, calibration = qdmi_records()
+	telemetry = FakeTelemetryAPI(info, device, coupling, calibration)
+	backend = _backend(
+		monkeypatch, telemetry, provider="shim",
+		qpm_properties={"provider": "shim"})
+	backend.options.lib = "qdmi"
+
+	target = backend.target
+
+	assert [kwargs["lib"] for _name, kwargs in telemetry.calls] == [
+		"qdmi", "qdmi", "qdmi", "qdmi"]
+	assert target.num_qubits == 3
+	assert target.description == "QFw iqm ornl-3q target"
+	assert set(target.operation_names) == {"r", "cz", "measure"}
+	assert _qargs(target, "cz") == {(0, 1), (1, 0), (1, 2), (2, 1)}
+	assert _qargs(target, "r") == {(0,), (1,), (2,)}
+	cz = target["cz"][(0, 1)]
+	assert abs(cz.error - 0.005) < 1e-12
+	assert abs(cz.duration - 60e-9) < 1e-18
+	assert target["cz"][(1, 0)] is cz
+	assert target["cz"][(1, 2)] is None
+	prx = target["r"][(0,)]
+	assert abs(prx.error - 0.0005) < 1e-12
+	assert abs(prx.duration - 16e-9) < 1e-18
+	assert backend.target_source == "device: QFw iqm ornl-3q target"
