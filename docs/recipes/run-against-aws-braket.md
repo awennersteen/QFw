@@ -20,7 +20,8 @@ Braket profile this recipe exercises.
 ## What you need
 
 - A QFw installation whose Python environment carries `amazon-braket-qdmi`
-  (the cluster image and `do_qfw_build.sh` pin 1.2.0) beside `mqt-core`.
+  (the cluster image and `do_qfw_build.sh` pin it through
+  `setup/qdmi-requirements.txt`) beside `mqt-core`.
   Check with `python -c 'import amazon.braket.qdmi'` after activation.
 - An AWS account prepared as in Step 1, and an identity for the service
   process as in Step 2.
