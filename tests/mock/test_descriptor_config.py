@@ -147,7 +147,7 @@ def test_shim_example_uses_no_secret_credential_provider():
 	assert cepheus["aws-region"] == "us-west-1"
 	assert cepheus["num-qubits"] == 108
 	assert cepheus["max-shots"] == 1024
-	assert cepheus["job-timeout-seconds"] == 1800
+	assert cepheus["job-timeout-seconds"] == 7200
 	assert "s3-results-uri" not in cepheus
 	assert cepheus["credential-provider"] == "shim-no-secret"
 	assert cepheus["libraries"] == ["qdmi"]
