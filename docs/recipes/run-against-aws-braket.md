@@ -182,16 +182,18 @@ the library directly before paying for a task:
 
 ```bash
 python - <<'PY'
-from amazon.braket.qdmi import AMAZON_BRAKET_QDMI_LIBRARY_PATH, AMAZON_BRAKET_QDMI_PREFIX
-from mqt.core.qdmi.driver import DeviceDefinition, open_device, register_device_if_absent
+from amazon.braket.qdmi.qiskit import AmazonBraketBackend
 
-name = "amazon.braket.rigetti.cepheus-1-108q"
-arn = "arn:aws:braket:us-west-1::device/qpu/rigetti/Cepheus-1-108Q"
-register_device_if_absent(DeviceDefinition(
-    name, str(AMAZON_BRAKET_QDMI_LIBRARY_PATH), AMAZON_BRAKET_QDMI_PREFIX))
-print(open_device(name, base_url=arn, custom2="us-west-1").status())
+backend = AmazonBraketBackend(
+    device_id="amazon.braket.rigetti.cepheus-1-108q",
+    device_arn="arn:aws:braket:us-west-1::device/qpu/rigetti/Cepheus-1-108Q",
+    region="us-west-1")
+print(backend.device.status())
 PY
 ```
+
+This is the same packaged adapter QFw's Braket profile opens the device
+with (`amazon-braket-qdmi[qiskit]`, MQT Core 4.1).
 
 `Status.IDLE` means the device is inside an execution window with fewer
 than five tasks queued. `Status.BUSY` means a longer queue or a closed
