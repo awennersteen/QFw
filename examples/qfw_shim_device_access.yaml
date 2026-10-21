@@ -26,7 +26,9 @@ qpus:
   # Rigetti's Cepheus-1-108Q through Braket, in us-west-1: a real QPU,
   # billed per task and per shot. max-shots refuses a larger request before
   # a task exists, and job-timeout-seconds is how long a queued task is
-  # waited for before it is cancelled. A site sets s3-results-uri to its own
+  # waited for before it is cancelled: two hours, because a prioritized
+  # hybrid job can hold the QPU for an hour inside an execution window. A
+  # site sets s3-results-uri to its own
   # bucket for the task results; Braket wants it in the device's Region, and
   # AmazonBraketFullAccess covers buckets named amazon-braket-*. Without it
   # the library creates a default bucket, which needs S3 permissions the
@@ -40,7 +42,7 @@ qpus:
     url: https://braket.us-west-1.amazonaws.com
     num-qubits: 108
     max-shots: 1024
-    job-timeout-seconds: 1800
+    job-timeout-seconds: 7200
     credential-provider: shim-no-secret
     libraries:
       - qdmi

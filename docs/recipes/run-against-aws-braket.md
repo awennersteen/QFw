@@ -128,7 +128,7 @@ qpus:
     url: https://braket.us-west-1.amazonaws.com
     num-qubits: 108
     max-shots: 1024
-    job-timeout-seconds: 1800
+    job-timeout-seconds: 7200
     credential-provider: shim-no-secret
     libraries:
       - qdmi
@@ -146,7 +146,7 @@ qpus:
 | `url` | Ignored by the library, required by QFw's device selection. |
 | `num-qubits` | Overrides the qubit count QFw reports for the device. The device's own count still appears in `get_device_info`. |
 | `max-shots` | Refused above before a task exists. Keep it on billed devices. |
-| `job-timeout-seconds` | How long a queued task is waited for before QFw cancels it. QPUs queue; 300 seconds is the default. Set it past the next execution window to submit across a gap (Step 4). |
+| `job-timeout-seconds` | How long a queued task is waited for before QFw cancels it. QPUs queue; 300 seconds is the default. The example gives Cepheus two hours, since a prioritized hybrid job can hold the QPU for an hour inside a window. Set it past the next execution window to submit across a gap (Step 4). |
 
 Measurements are keyed by classical bit, as in Qiskit, whichever device ran
 them. The shim writes its OpenQASM 3 so that Braket's backends, which order
@@ -217,11 +217,15 @@ aws braket get-device --region us-west-1 \
   | python -c 'import json, sys; print(json.load(sys.stdin)["service"]["executionWindows"])'
 ```
 
-A task submitted in the 02:00 gap with the default 30 minute wait sat
-queued and was cancelled by QFw, unbilled. Resubmitted twelve minutes
-before 04:00, the same task ran within the first minute of the window. To
-run across a gap, set `job-timeout-seconds` past the next opening and give
-the smoke's `--circuit-run-timeout` at least the same wait.
+A task submitted in the 02:00 gap with a 30 minute wait sat queued and
+was cancelled by QFw, unbilled. Resubmitted twelve minutes before 04:00,
+the same task ran within the first minute of the window. Inside a window,
+`BUSY` can also mean a long wait: with a prioritized hybrid job running on
+Cepheus and eleven tasks queued, a task waited an hour before it ran, so a
+30 minute timeout cancelled it and a two hour one covered it. To run
+across a gap or behind a hybrid job, set `job-timeout-seconds` past the
+expected wait and give the smoke's `--circuit-run-timeout` at least the
+same.
 
 ## 5. Run circuits
 
@@ -236,7 +240,7 @@ than its `job-timeout-seconds`:
 ./qfw_shim_smoke.sh --device-id aws-sv1 --lib qdmi --call async_run \
   --shots 100 --circuit asymmetric
 ./qfw_shim_smoke.sh --device-id aws-cepheus --lib qdmi --call async_run \
-  --shots 100 --circuit asymmetric --circuit-run-timeout 1900
+  --shots 100 --circuit asymmetric --circuit-run-timeout 7300
 ```
 
 Real hardware is noisy. The smoke's counts check accepts the expected key as
