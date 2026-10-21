@@ -29,20 +29,6 @@ SERVICES = str(REPO_ROOT / "services")
 if SERVICES not in sys.path:
 	sys.path.insert(0, SERVICES)
 
-if "defw_exception" not in sys.modules:
-	try:
-		import defw_exception  # noqa: F401
-	except ImportError:
-		# Outside a QFw install there is no DEFw. util.iqm_transcode only
-		# needs its exception type, so stand in a minimal one.
-		stub = types.ModuleType("defw_exception")
-
-		class DEFwExecutionError(Exception):
-			pass
-
-		stub.DEFwExecutionError = DEFwExecutionError
-		sys.modules["defw_exception"] = stub
-
 
 CALIBRATION_SET_ID = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
 
