@@ -70,7 +70,8 @@ class CircuitMetrics:
 	def dump(self):
 		import copy
 
-		dbcopy = copy.deepcopy(self.db)
+		with self.lock:
+			dbcopy = copy.deepcopy(self.db)
 		for k, v in dbcopy.items():
 			del v['window']
 		logging.defw_app("QFw Backend statistics")
