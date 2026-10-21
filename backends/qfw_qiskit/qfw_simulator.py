@@ -10,10 +10,16 @@ from qiskit.providers import BackendV2, Options
 
 from .qfw_job import QFwJob, normalize_reservation_id, normalize_shim_library
 from .qfw_metadata import get_qubit_mapping, set_qubit_mapping
-from .qfw_target import QFW_NUM_QUBITS, build_qfw_target, qfw_basis_gates
+from .qfw_target import (
+	QFW_NUM_QUBITS,
+	build_qfw_target,
+	qfw_basis_gates,
+	target_from_telemetry,
+)
+from .qfw_telemetry import QFwTelemetry
 from defw_exception import DEFwDumper
 from defw import me
-from .qfw_lookup_service import get_qpm
+from .qfw_lookup_service import get_qpm, get_qpm_telemetry
 from .qpm_selection import qpm_selection_for_provider
 from api_qpm_common import QPMCapability
 from defw_event_baseapi import BaseEventAPI
@@ -110,6 +116,11 @@ class QFwBackend(BackendV2):
 			**lookup_kwargs)
 		self._qpm_lifecycle_binding = getattr(
 			self.qpm, "lifecycle_binding", None)
+		# The QPM's telemetry API, bound next to the execution API on the
+		# same managed binding. It describes the device behind self.target.
+		self._telemetry_api = get_qpm_telemetry(self.qpm)
+		self._telemetry = None
+		self._target_source = None
 		self.event_api = BaseEventAPI()
 		self.event_api.register_external()
 		self._event_endpoint = me.my_endpoint()
@@ -165,12 +176,16 @@ class QFwBackend(BackendV2):
 	def configuration(self):
 		# LEGACY (BackendV1): Return configuration dict for backward compatibility
 		# BackendV2 doesn't require this method but some legacy code may use it
+		target = self.target
+		coupling_map = target.build_coupling_map()
 		configuration_dict = {
 			"backend_name": self.my_name(),
 			"backend_version": self.my_version(),
-			"n_qubits": self._num_qubits,
-			"basis_gates": qfw_basis_gates(),
-			"coupling_map": None,
+			"n_qubits": target.num_qubits,
+			"basis_gates": sorted(target.operation_names) or qfw_basis_gates(),
+			"coupling_map": (
+				None if coupling_map is None else
+				[list(edge) for edge in coupling_map.get_edges()]),
 			"simulator": True,
 			"local": True,
 			"conditional": True,
@@ -188,12 +203,76 @@ class QFwBackend(BackendV2):
 		return self._options_properties
 
 	@property
-	def target(self):
-		if self._target is not None:
-			return self._target
+	def telemetry(self):
+		"""The QPM's telemetry API (QFwTelemetry), or None when the QPM
+		connection carries no managed binding to select it from."""
+		if self._telemetry is None and self._telemetry_api is not None:
+			self._telemetry = QFwTelemetry(
+				self._telemetry_api, context=self._telemetry_context)
+		return self._telemetry
 
-		self._target = build_qfw_target(self._num_qubits)
+	def _telemetry_context(self):
+		# What every telemetry call carries: the shim library a run would
+		# use, so the device described is the one the circuits reach, and
+		# the reservation token when the run context holds one.
+		context = {"lib": self._shim_library()}
+		token = getattr(self.options, "token", None)
+		if token is not None:
+			context["token"] = token
+		return context
+
+	@property
+	def target(self):
+		"""The device target: what the QPM's telemetry describes, built once
+		per backend, else QFw's generic target (see target_source)."""
+		if self._target is None:
+			self._target = self._build_target()
 		return self._target
+
+	@property
+	def target_source(self):
+		"""Where self.target came from: "device: <provider> <device>" or
+		"generic: <reason>"; None until the target has been built."""
+		return self._target_source
+
+	def _build_target(self):
+		generic = f"the generic {self._num_qubits}-qubit QFw target"
+		telemetry = self.telemetry
+		if telemetry is None:
+			reason = "the QPM connection has no telemetry binding"
+			logging.info(f"QFw backend: {reason}; using {generic}")
+			self._target_source = f"generic: {reason}"
+			return build_qfw_target(self._num_qubits)
+		try:
+			info = telemetry.get_backend_info() or {}
+			target = target_from_telemetry(telemetry, backend_info=info)
+		except Exception as exc:
+			reason = f"the QPM's device telemetry failed: {exc}"
+			logging.warning(f"QFw backend: {reason}; using {generic}")
+			self._target_source = f"generic: {reason}"
+			return build_qfw_target(self._num_qubits)
+		if target is None:
+			name = info.get("backend") or self._provider or "default"
+			reason = f"QPM {name} reports no device metadata"
+			logging.info(f"QFw backend: {reason}; using {generic}")
+			self._target_source = f"generic: {reason}"
+			return build_qfw_target(self._num_qubits)
+		self._target_source = f"device: {target.description}"
+		logging.info(f"QFw backend: {target.description}: "
+			     f"{target.num_qubits} qubits, "
+			     f"{len(target.operation_names)} operations")
+		return target
+
+	def _shim_library(self, lib=None):
+		# The shim library (qrmi or qdmi) a run goes through: the run()
+		# argument, else the backend option, else QFW_SHIM_LIB, else the
+		# shim's own default (None).
+		if lib is None:
+			lib = self.options.lib
+		if lib is None:
+			lib = os.environ.get(SHIM_LIB_ENV)
+		return normalize_shim_library(
+			lib, getattr(self.qpm, "qpm_properties", None))
 
 	@property
 	def max_circuits(self):
@@ -233,11 +312,7 @@ class QFwBackend(BackendV2):
 		if "reservation_id" in options:
 			options["reservation_id"] = normalize_reservation_id(
 				options["reservation_id"])
-		lib = kwargs.get("lib", self.options.lib)
-		if lib is None:
-			lib = os.environ.get(SHIM_LIB_ENV)
-		lib = normalize_shim_library(
-			lib, getattr(self.qpm, "qpm_properties", None))
+		lib = self._shim_library(kwargs.get("lib"))
 		if lib is not None:
 			options["lib"] = lib
 		self._qfw_job = QFwJob(self, self.qpm, self.event_api, circuits, options)

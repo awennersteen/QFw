@@ -1036,6 +1036,52 @@ adapters. Code using that interface is responsible for attaching the
 launcher-provided reservation ID, but it still does not create the reservation
 itself.
 
+#### Device Target
+
+A Qiskit application transpiles against `backend.target`. The QFw backend
+builds that target from the QPM it is bound to. Next to the execution API it
+binds the QPM's telemetry API, exposed as `backend.telemetry`, asks
+`get_backend_info()` whether the QPM describes a device, and when it does
+builds a `Target` from the device's qubits, its native operations on the loci
+they are offered on, the coupling edges, and the calibration snapshot's errors
+and durations:
+
+| What the QPM reports | What `backend.target` holds |
+| --- | --- |
+| IBM through the shim: the raw `BackendConfiguration` under `static_architecture` and the raw `BackendProperties` under `backend_properties` | The target `qiskit_ibm_runtime` builds for that backend; its converter runs on the client, and without the package the configuration alone gives the qubits, basis gates and coupling map |
+| IQM through the shim, or any QDMI device: the qhw device, coupling and calibration records | The device's qubits, its native gates (`r` for IQM's `prx`, `cz`, `measure`, `reset`) on their loci, both orders of each symmetric two-qubit locus, error and duration per locus, T1 and T2 per qubit |
+| A QPM with a plain description, such as the fake IQM: a qubit count and a `couplings` list | The qubit count and the coupling edges, with QFw's generic gates on them |
+| `metadata_supported: false` (NWQSim, TNQVM, QB) | The generic 400-qubit all-to-all target |
+
+The target is built once per backend instance, on first use. When the
+telemetry call fails, or the QPM connection carries no telemetry binding, the
+backend keeps the generic target and logs why. `backend.target_source` says
+which target it holds: `device: ...` or `generic: <reason>`.
+
+On a shim QPM with `credential-mode: required`, the telemetry calls resolve
+the credential record of the user the QPM service runs as, not the
+reservation's. Without that record the backend keeps the generic target, with
+the reason in `backend.target_source`, while the reservation still runs the
+circuits under its own credential.
+
+```python
+from qiskit import transpile
+from qfw_qiskit import QFwBackend
+
+backend = QFwBackend(provider="fake-iqm")
+print(backend.target_source)   # device: QFw fake-iqm fake-iqm-20q target
+print(backend.target.num_qubits, backend.target.build_coupling_map())
+isa_circuit = transpile(circuit, target=backend.target)
+job = backend.run(isa_circuit, shots=100)
+```
+
+`backend.telemetry` is also usable on its own. `get_backend_info()`,
+`get_device_info()`, `get_coupling_graph()`, `get_calibration_snapshot()` and
+`get_dynamic_backend_info()` return the QPM's records, with the backend's shim
+library (`lib`) and reservation token filled in. A workflow that plans its
+layout before it submits reads them in the reserved job it submits from, since
+they describe the QPM the reservation names.
+
 #### Application Output
 
 Applications write normal results to standard output and errors to standard

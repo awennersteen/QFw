@@ -239,6 +239,24 @@ Machine-specific behavior belongs in the selected QRMI resource implementation
 or QDMI device implementation. The QFw shim should consume the QRMI or QDMI
 contract and remain provider-agnostic.
 
+The introspection facet is what the Qiskit client builds its device target
+from. `QFwBackend.target` asks the QPM's telemetry API: `get_backend_info()`
+reports `metadata_supported: true` for a machine with a device to describe,
+and `get_device_info()`, `get_coupling_graph()` and
+`get_calibration_snapshot()` are read as qhw records: the qubits, the coupling
+edges, the native operations with their loci, and the errors and durations per
+locus. The QRMI and the QDMI driver both serve these four calls, so a machine
+wired for one library only, such as a Braket entry on QDMI, describes itself
+from that library. For an IBM resource the backend-info record also carries the raw
+`BackendConfiguration` (`static_architecture`) and `BackendProperties`
+(`backend_properties`), which the client converts the way the driver's own ISA
+compilation does. A machine therefore supports target-aware transpilation once
+its QRMI resource or QDMI device serves those queries. A library that serves
+none should answer `metadata_supported: false`, and the client keeps QFw's
+generic target. On a `credential-mode: required` device those calls resolve
+the credential record of the user the QPM runs as, so that user needs an
+enabled record for the device. See the Device Target section of `usage.md`.
+
 If adding a machine requires machine-specific changes in the shim, treat that
 as an architecture gap to clean up separately, not as normal machine onboarding.
 

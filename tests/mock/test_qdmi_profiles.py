@@ -387,7 +387,7 @@ def test_the_iqm_profile_defaults():
 	profile = profile_for({"provider": "iqm"})
 
 	assert profile.calibration_set_slot == "CUSTOM1"
-	assert profile.technology() is None
+	assert profile.technology() == "superconducting"
 	assert profile.job_kwargs({}) == {}
 	assert profile.check_shots(10_000) is None
 	assert profile.timeout_seconds({}) == 300.0

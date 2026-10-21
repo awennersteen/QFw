@@ -191,6 +191,11 @@ class IqmQdmiProfile(QdmiProfile):
 			"qc_alias": provider_device_id or device_id,
 		}
 
+	def technology(self):
+		# IQM builds superconducting processors; qhw_iqm records the same
+		# family for the QRMI path, so the two device records agree.
+		return "superconducting"
+
 	def open_backend(self, access):
 		# The released adapter also reads process-wide IQM session defaults.
 		for variable in (

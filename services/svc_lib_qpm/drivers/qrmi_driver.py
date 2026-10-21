@@ -944,16 +944,21 @@ class QrmiDriver(BaseDriver):
 	def get_backend_info(self):
 		if self._provider() == "ibm":
 			from qhw_ibm import normalize_device
-			target_config_json = self._target().get("configuration") or {}
+			target = self._target()
+			target_config_json = target.get("configuration") or {}
 			if not target_config_json:
 				raise DEFwExecutionError("QRMI failed to retrieve the backend data")
 			qhw_device = normalize_device(target_config_json, device_id=self._device_id())
 			qubits_len = len(qhw_device.get("qubits", []))
 			n_qubits = target_config_json.get("n_qubits", qubits_len)
+			# The raw configuration and properties together are what
+			# _build_backend_target converts to the ISA target, so a client
+			# that builds its own target gets both here.
 			return {
 				"backend": "ibm",
 				"metadata_supported": True,
 				"static_architecture": target_config_json,
+				"backend_properties": target.get("properties") or None,
 				"active_qubits": list(range(n_qubits)),
 				"calibration_set_id": None,
 				"qhw_device": qhw_device,
