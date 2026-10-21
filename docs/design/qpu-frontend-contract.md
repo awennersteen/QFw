@@ -289,6 +289,9 @@ Amazon Braket backends can order result columns by qubit index or classical
 register. QFw emits terminal measurements in ascending qubit order into a
 register containing only the measured qubits. This aligns both column orders,
 so the device library's histogram keys have the highest measured qubit first.
+amazon-braket-qdmi 1.3.1 also reads Braket's `measuredQubits` and keys by
+qubit index on every backend, so that alignment is no longer the only thing
+keeping Rigetti honest, but it still is what makes the two orders one.
 The measurement map restores the original classical-bit layout before creating
 `qhw-result-v1`, including multiple destinations and the final write to each
 bit. Unbound parameters, unsupported reset and gates on measured qubits fail
