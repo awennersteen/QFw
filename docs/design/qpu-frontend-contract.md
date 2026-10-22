@@ -377,9 +377,9 @@ implementation to evaluate the shim against.
     are imported lazily, so the service constructs and routes before any real
     library call is made.
   - `drivers/qdmi_profiles.py` — QFw resource settings, execution policy,
-    and program/result adaptation for IQM and Braket. The packaged
-    provider adapters open sessions through MQT Core. `QdmiDriver` waits for
-    jobs and converts results to qhw records.
+    and program/result adaptation for IQM, Amazon Braket, and IBM. The
+    packaged provider adapters open sessions through MQT Core. `QdmiDriver`
+    waits for jobs and converts results to qhw records.
 - **`dev-config/config.yaml`** (resolved via `services/util/device_access.py`)
   gains `libraries:`, `preference:`, and per-resource `caps:` — the persistent
   source for `resolve_descriptor()`, replacing the built-in default.
