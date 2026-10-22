@@ -3,7 +3,7 @@ import os
 from .svc_qrc import QRC
 from util.qpm.util_qpm import UTIL_QPM
 from util.qpm.util_circuit import set_max_qubits_pp
-from util.circuit_payload import qiskit_circuit_formats, OPENQASM2
+from util.circuit_payload import qiskit_circuit_formats, OPENQASM2, PULSER
 
 MAX_SHIM_QUBITS = 1024
 MAX_SHIM_SHOTS = 10000
@@ -12,14 +12,27 @@ MAX_SHIM_SHOTS = 10000
 def _technology(descriptor):
 	# The qhw technology family the resource's device belongs to, for the
 	# directory record. A Braket device says so in its ARN; the IQM and IBM
-	# devices the shim serves are superconducting.
+	# devices the shim serves are superconducting, and Pasqal's neutral-atom.
 	provider = str(descriptor.get("provider") or "").lower()
 	if provider == "aws":
 		from util.braket_transcode import technology_for_arn
 		return technology_for_arn(descriptor.get("provider_device_id"))
 	if provider in ("iqm", "ibm"):
 		return "superconducting"
+	if provider == "pasqal":
+		return "neutral-atom"
 	return None
+
+
+def _capability(provider):
+	# The technology bit a client looks the service up by: neutral-atom for
+	# a Pasqal device, and the superconducting bit the shim always advertised
+	# for every other, whatever its technology. What a QPM reads is its
+	# circuit_formats, which a client checks before it sends anything.
+	from api_qpm_common import QPMCapability
+	if provider == "pasqal":
+		return QPMCapability.QPM_CAP_NEUTRAL_ATOM
+	return QPMCapability.QPM_CAP_SUPERCONDUCTING
 
 
 class QPM(UTIL_QPM):
@@ -40,7 +53,7 @@ class QPM(UTIL_QPM):
 
 	def query(self):
 		from . import SERVICE_NAME, SERVICE_DESC, svc_info
-		from api_qpm_common import QPMType, QPMCapability
+		from api_qpm_common import QPMType
 		from .descriptor import resolve_descriptor
 		properties = dict(svc_info.get('properties', {}))
 		device_id = os.environ.get('QFW_QPU_DEVICE_ID')
@@ -48,14 +61,18 @@ class QPM(UTIL_QPM):
 			properties['device_id'] = device_id
 		# Both drivers read circuits through Qiskit, so QPY as well as
 		# OpenQASM 2, unless the service's own configuration says otherwise.
-		for key, value in qiskit_circuit_formats().items():
+		# A Pasqal device runs Pulser sequences instead, and nothing else.
+		descriptor = resolve_descriptor()
+		provider = str(descriptor.get("provider") or "").lower()
+		formats = ({"circuit_formats": [PULSER]} if provider == "pasqal"
+			else qiskit_circuit_formats())
+		for key, value in formats.items():
 			properties.setdefault(key, value)
 		# IBM devices reject OpenQASM 2 at run time (_run_ibm_circuit requires
 		# QPY). Remove it from the declaration so a client that cannot write QPY
 		# gets a clear error on format negotiation rather than a silent fallback
 		# that only fails once the circuit reaches the device.
-		descriptor = resolve_descriptor()
-		if descriptor.get("provider", "").lower() == "ibm":
+		if provider == "ibm":
 			formats = properties.get("circuit_formats", [])
 			properties["circuit_formats"] = [
 				f for f in formats if f != OPENQASM2]
@@ -63,10 +80,8 @@ class QPM(UTIL_QPM):
 		# find a shim service. The resource's own provider and technology ride
 		# beside it, and a device whose library does not say up front (the
 		# record is built before any session opens) takes its qubit count
-		# from device-access config. QPMCapability has no bits for a
-		# simulator or a trapped-ion device, so the capability bits stay as
-		# they are; `technology` is where that reads.
-		provider = str(descriptor.get("provider") or "").lower()
+		# from device-access config. The capability bits follow the
+		# technology (_capability).
 		if provider:
 			properties["device_provider"] = provider
 		technology = _technology(descriptor)
@@ -76,7 +91,7 @@ class QPM(UTIL_QPM):
 			properties["num_qubits"] = int(descriptor["num_qubits"])
 		info = self.query_helper(
 			QPMType.QPM_TYPE_HARDWARE,
-			QPMCapability.QPM_CAP_SUPERCONDUCTING,
+			_capability(provider),
 			SERVICE_NAME, SERVICE_DESC,
 			properties=properties)
 		logging.debug(f"shim {SERVICE_DESC}: {info}")
@@ -104,8 +119,29 @@ class QPM(UTIL_QPM):
 	def capability_map(self, token=None):
 		return self.qrc.capability_map()
 
-	def get_backend_info(self, lib=None, token=None):
-		return self.qrc.get_backend_info(lib=lib)
+	def get_backend_info(self, lib=None, token=None, reservation_id=None):
+		# A client that names its reservation reads the device as the
+		# reservation's credential sees it, as its circuits run. A QPU's
+		# specs need a login, which the service may not hold for itself.
+		return self.qrc.get_backend_info(lib=lib,
+			credential=self._reservation_credential(reservation_id, token))
+
+	def _reservation_credential(self, reservation_id, token=None):
+		# The credential bound to the reservation, resolved here from the
+		# controller rather than taken from the client, after the checks
+		# execution and cancel_task make (a reservation that is closing or
+		# does not match is refused), in the shape execution gets
+		# (controller.attach_provider_credential).
+		if reservation_id is None:
+			return None
+		from util.qpm.request import parse_execution_request
+		request = parse_execution_request(
+			{}, reservation_id=reservation_id, token=token)
+		self.require_managed_execution(request)
+		reservation_id = request.context.reservation_id
+		record = self.controller.provider_credential_for_reservation(
+			reservation_id, operation="get_backend_info")
+		return dict(record.get("secret") or {}, reservation_id=reservation_id)
 
 	def get_device_info(self, lib=None, token=None):
 		return self.qrc.get_device_info(lib=lib)

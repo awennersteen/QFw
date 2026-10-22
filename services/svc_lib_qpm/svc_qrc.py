@@ -248,8 +248,8 @@ class QRC:
 	def capability_map(self):
 		return self.frontend.capability_map()
 
-	def get_backend_info(self, lib=None):
-		return self.frontend.get_backend_info(lib=lib)
+	def get_backend_info(self, lib=None, credential=None):
+		return self.frontend.get_backend_info(lib=lib, credential=credential)
 
 	def get_device_info(self, lib=None):
 		return self.frontend.get_device_info(lib=lib)

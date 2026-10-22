@@ -161,6 +161,62 @@ def test_the_scheduler_bytes_are_the_submitted_circuit():
 	assert circuit_payload.payload_bytes({"num_shots": 10}) is None
 
 
+# --- Pulser sequences --------------------------------------------------------
+#
+# A Pasqal device runs a Pulser sequence, sent as Pulser's abstract
+# representation. It is not a circuit, so only a QPM that declares it reads
+# it, and a circuit QPM refuses it by name rather than failing in a parser.
+
+PULSER_JSON = '{"version": "1", "name": "pulser-exported"}'
+
+
+def _pulser_info(data=PULSER_JSON):
+	return {"circuit": {"format": "pulser-abstract-repr", "data": data}}
+
+
+def test_a_pulser_qpm_reads_the_sequence_as_sent():
+	assert circuit_payload.pulser_sequence(_pulser_info()) == PULSER_JSON
+	assert circuit_payload.payload_bytes(_pulser_info()) == \
+		PULSER_JSON.encode("utf-8")
+
+
+@pytest.mark.parametrize("info,fmt", [
+	({"qasm": "OPENQASM 2.0;"}, "openqasm2"),
+	(_qpy_info(), "qpy"),
+])
+def test_a_pulser_qpm_rejects_a_circuit_by_name(info, fmt):
+	with pytest.raises(
+			DEFwExecutionError,
+			match=f"Pulser sequences only and received a {fmt} circuit"):
+		circuit_payload.pulser_sequence(info)
+
+
+def test_a_circuit_qpm_rejects_a_pulser_sequence_by_name():
+	with pytest.raises(
+			DEFwExecutionError, match="received a Pulser sequence"):
+		circuit_payload.qiskit_input(_pulser_info())
+	with pytest.raises(
+			DEFwExecutionError,
+			match="received a pulser-abstract-repr circuit"):
+		circuit_payload.openqasm2_text(_pulser_info())
+
+
+def test_a_pulser_sequence_is_encoded_in_its_abstract_representation():
+	sequence = types.SimpleNamespace(to_abstract_repr=lambda: PULSER_JSON)
+
+	assert circuit_payload.encode_pulser_sequence(sequence) == _pulser_info()
+
+
+def test_a_sequence_pulser_cannot_write_says_so():
+	def to_abstract_repr():
+		raise ValueError("missing variables")
+
+	with pytest.raises(
+			DEFwExecutionError, match="could not write the Pulser sequence"):
+		circuit_payload.encode_pulser_sequence(
+			types.SimpleNamespace(to_abstract_repr=to_abstract_repr))
+
+
 def test_qiskit_input_keeps_openqasm2_as_text():
 	assert circuit_payload.qiskit_input({"qasm": "OPENQASM 2.0;"}) == \
 		"OPENQASM 2.0;"

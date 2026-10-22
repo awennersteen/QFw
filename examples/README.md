@@ -181,6 +181,33 @@ With no choice the shim runs the circuit through the device's execution owner,
 which is QRMI unless its device-access entry says otherwise. Naming a library
 for a QPM that is not the shim is an error.
 
+### `qfw_pulser.sh`
+
+Runs one Pulser program on a Pasqal device through the shim QPM, with Pulser's
+own `QPUBackend` and `qfw_pulser.QFwConnection`, and prints the results. It
+starts the shim service from `qfw_pulser_services.yaml` bound to a device in
+`qfw_pulser_device_access.yaml` and reserves it. The application environment
+needs `setup/pulser-requirements.txt`.
+
+The program fetches the device's Pulser specs through the QPM and places its
+atoms on a calibrated layout, at least 15 um apart. A global drive of
+pi rad/us runs for 500 ns, a pi/2 pulse that spreads each atom evenly over its
+two states, and then for 1000 ns, a pi pulse that flips every atom. An
+emulator accepts programs built for any real device it reports; `--build-on`
+picks which (FRESNEL_CAN1 by default). A device can require its layout to be
+filled to a minimum fraction: FRESNEL needs 42 atoms on its 120 traps, which
+then interact, so run it with `--atoms 42`.
+
+`pasqal-emu-free` is Pasqal Cloud's EMU_FREE and `pasqal-fresnel` the FRESNEL
+QPU. The QPM service opens them with the token in `QFW_API_KEY`, billed to
+`QFW_PASQAL_PROJECT_ID`:
+
+```bash
+QFW_API_KEY=... QFW_PASQAL_PROJECT_ID=... ./qfw_pulser.sh
+QFW_API_KEY=... QFW_PASQAL_PROJECT_ID=... \
+	./qfw_pulser.sh --device-id pasqal-fresnel --atoms 42
+```
+
 ### `measure_shim_introspection.py`
 
 Measures what device introspection costs through each shim library, cold and

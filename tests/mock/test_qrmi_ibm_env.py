@@ -591,10 +591,10 @@ def test_resource_env_routes_by_type():
 		driver._ensure_resource_env(type_name, "ibm_torino")
 		assert ibm_calls == [(kind, "ibm_torino")]
 
-	# Pasqal has no device-access mapping yet, so neither helper runs.
+	# PasqalLocal has no device-access mapping yet, so neither helper runs.
 	iqm_calls.clear()
 	ibm_calls.clear()
-	driver._ensure_resource_env("PasqalCloud", "fresnel")
+	driver._ensure_resource_env("PasqalLocal", "fresnel")
 	assert not iqm_calls and not ibm_calls
 
 

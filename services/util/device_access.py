@@ -278,7 +278,8 @@ def select_qpu(device_config, path, provider=None, device_id=None):
 			"s3-endpoint", "s3-endpoint-for-qsapi", "s3-bucket",
 			"s3-region", "job-timeout-seconds",
 			"qdmi-device-id", "aws-region", "s3-results-uri",
-			"reservation-arn", "num-qubits", "max-shots"):
+			"reservation-arn", "num-qubits", "max-shots",
+			"project-id"):
 		if key in device:
 			selected[key] = device[key]
 	if "execution-owner" in device:
@@ -485,11 +486,15 @@ def _entitlement_detail(users, candidates, device_id, provider_device_id,
 	return ": " + "; ".join(reasons)
 
 
-def get_api_key_from_user_record(record, device_id, provider_device_id=None):
+def _user_device_value(record, device_id, provider_device_id, key):
 	device_record = _entitled_device_record(
 		record, device_id, provider_device_id) or {}
-	value = device_record.get("api_key")
+	value = device_record.get(key)
 	return str(value).strip() if value else None
+
+
+def get_api_key_from_user_record(record, device_id, provider_device_id=None):
+	return _user_device_value(record, device_id, provider_device_id, "api_key")
 
 
 def get_service_crn_from_user_record(
@@ -498,10 +503,18 @@ def get_service_crn_from_user_record(
 	# than tied to one device, and a user can be assigned to several
 	# instances, so a user's entry can name the one to run under. Without one,
 	# the device's service-crn in device-access config applies.
-	device_record = _entitled_device_record(
-		record, device_id, provider_device_id) or {}
-	value = device_record.get("service_crn")
-	return str(value).strip() if value else None
+	return _user_device_value(
+		record, device_id, provider_device_id, "service_crn")
+
+
+def get_project_id_from_user_record(
+		record, device_id, provider_device_id=None):
+	# Optional, for Pasqal devices. A Pasqal Cloud job is billed to a project,
+	# and a user can belong to several, so a user's entry can name the one to
+	# run under. Without one, the device's project-id in device-access config
+	# applies.
+	return _user_device_value(
+		record, device_id, provider_device_id, "project_id")
 
 
 # The object storage QRMI's IBM Quantum System stages results through. The
@@ -557,6 +570,8 @@ def resolve_qpu_credentials(device, user=None, credential_hint=None,
 		"api_key": api_key,
 		"service_crn": get_service_crn_from_user_record(
 			record, device["device_id"], device.get("provider_device_id")),
+		"project_id": get_project_id_from_user_record(
+			record, device["device_id"], device.get("provider_device_id")),
 	}
 	resolved.update(get_object_storage_from_user_record(
 		record, device["device_id"], device.get("provider_device_id")))
@@ -574,14 +589,20 @@ def _entitlement_credentials(device, user, credential_db_path,
 			f"credential provider {device.get('credential_provider')!r}, "
 			"which needs a credential-db to read entitlements from")
 	credential_db = load_json_config(credential_db_path)
-	user, _record = select_entitled_record(
+	user, record = select_entitled_record(
 		credential_db,
 		user,
 		device_id=device["device_id"],
 		provider_device_id=device.get("provider_device_id"),
 		credential_hint=credential_hint,
 		credential_handle=credential_handle)
-	return {"user": user, "api_key": None, "service_crn": None}
+	# No key, but a user's entry can still name the Pasqal project to run
+	# under, as with a file credential DB.
+	return {
+		"user": user, "api_key": None, "service_crn": None,
+		"project_id": get_project_id_from_user_record(
+			record, device["device_id"], device.get("provider_device_id")),
+	}
 
 
 def _credentials_without_a_database(device, user):
@@ -634,6 +655,7 @@ def resolve_device_access(provider=None, device_id=None, user=None,
 		"user": credentials["user"],
 		"quantum_computer": device["provider_device_id"],
 		"service_crn": credentials.get("service_crn"),
+		"project_id": credentials.get("project_id"),
 	}
 	for key in OBJECT_STORAGE_SECRET_KEYS:
 		if credentials.get(key):

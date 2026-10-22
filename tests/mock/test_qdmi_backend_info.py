@@ -149,7 +149,7 @@ class _Library:
 	def implements(self, call):
 		return call in self.CAPABILITIES
 
-	def get_backend_info(self):
+	def get_backend_info(self, credential=None):
 		return {"backend": self.name, "metadata_supported": True}
 
 
@@ -185,3 +185,32 @@ def test_a_qdmi_only_resource_serves_get_backend_info():
 	assert frontend.get_backend_info()["backend"] == "qdmi"
 	with pytest.raises(NotImplementedByLibrary):
 		frontend.get_backend_info(lib="qrmi")
+
+
+def test_a_reservation_bound_read_opens_the_qdmi_device_with_its_credential(
+		monkeypatch):
+	# The telemetry API takes a reservation_id on every QPM, and the shim
+	# then hands the reservation's credential to whichever library serves
+	# the call; QDMI is the default for this one.
+	_install_custom_property(monkeypatch)
+	monkeypatch.setattr(
+		fomac_normalize, "to_device_record",
+		lambda topo, provider, device_id, **kwargs: {"qubits": topo["qubits"]})
+	driver = _driver(_device())
+	opened = []
+	device = driver._device
+	driver._device = lambda credential=None: (
+		opened.append(credential) or device(credential))
+	frontend = Frontend([driver], {
+		"id": "ornl-iqm-20q",
+		"libraries": ["qdmi"],
+		"preference": "qdmi",
+		"execution_owner": "qdmi",
+		"caps": {call: list(libs) for call, libs in DEFAULT_CAPS.items()},
+	})
+	credential = {"reservation_id": 7, "token": "user-token"}
+
+	info = frontend.get_backend_info(credential=credential)
+
+	assert info["active_qubits"] == ["QB1", "QB2", "QB3"]
+	assert opened == [credential]

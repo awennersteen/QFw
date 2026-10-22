@@ -8,7 +8,8 @@ from collections import deque
 
 from qiskit.providers import BackendV2, Options
 
-from .qfw_job import QFwJob, normalize_reservation_id, normalize_shim_library
+from .qfw_job import (
+	QFwJob, SHIM_LIB_ENV, normalize_reservation_id, normalize_shim_library)
 from .qfw_metadata import get_qubit_mapping, set_qubit_mapping
 from .qfw_target import (
 	QFW_NUM_QUBITS,
@@ -32,11 +33,6 @@ QFW_RUN_CONTEXT_OPTIONS = (
 	"timeout",
 	"cancel_on_timeout",
 )
-
-# The shim library (qrmi or qdmi) a job runs through when neither run() nor
-# the backend's options name one, so a batch script can choose it for a Qiskit
-# program it does not edit.
-SHIM_LIB_ENV = "QFW_SHIM_LIB"
 
 
 class CircuitMetrics:

@@ -15,6 +15,21 @@ def reservation_cache_key(reservation_id):
 	return ("reservation", str(reservation_id))
 
 
+def pasqal_backend_info(device_type, entries):
+	# get_backend_info for a Pasqal device: the Pulser devices it runs, by
+	# name, in Pulser's abstract representation. entries are Pasqal Cloud's
+	# [{"device_type", "specs"}], the one device for a QPU and the real
+	# devices' public specs for an emulator, which runs a sequence built for
+	# any of them.
+	return {
+		"backend": "pasqal",
+		"metadata_supported": True,
+		"device_type": device_type,
+		"pulser_devices": {
+			str(entry["device_type"]): entry["specs"] for entry in entries},
+	}
+
+
 class JobRecords:
 	# The jobs a driver ran, by cid, for get_task_timing and
 	# get_task_metadata. A lookup names its cid, so one user's call never

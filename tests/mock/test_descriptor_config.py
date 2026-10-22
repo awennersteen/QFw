@@ -95,10 +95,22 @@ AWS_DEVICE = {
 	"execution-owner": "qdmi",
 }
 
+# A Pasqal device. The Pasqal Cloud project is the default for users whose
+# credential entry names none.
+PASQAL_DEVICE = {
+	"provider": "pasqal",
+	"provider-device-id": "EMU_FREE",
+	"url": "https://apis.pasqal.cloud",
+	"credential-db": "creds.json",
+	"resource-type": "PasqalCloud",
+	"project-id": "proj-device",
+}
+
 DESCRIPTOR_KEYS = (
 	"libraries", "preference", "caps", "execution_owner",
 	"service-crn", "iam-endpoint", "qdmi-device-id", "aws-region",
-	"s3-results-uri", "reservation-arn", "num-qubits", "max-shots")
+	"s3-results-uri", "reservation-arn", "num-qubits", "max-shots",
+	"project-id")
 
 
 def _config(device, device_id="dev"):
@@ -163,6 +175,36 @@ def test_shim_example_uses_no_secret_credential_provider():
 
 
 # --- select_qpu(): the fix site --------------------------------------------
+
+@pytest.mark.parametrize("device_id,provider_device_id", [
+	("pasqal-emu-free", "EMU_FREE"),
+	("pasqal-fresnel", "FRESNEL"),
+])
+def test_pulser_example_devices_reach_the_driver(
+		monkeypatch, device_id, provider_device_id):
+	# The config qfw_pulser.sh builds: its project filled in, read the way
+	# the shim service reads it.
+	text = (REPO_ROOT / "examples" / "qfw_pulser_device_access.yaml") \
+		.read_text(encoding="utf-8") \
+		.replace("QFW_PASQAL_PROJECT_ID", "proj")
+	manifest = yaml.safe_load(
+		(REPO_ROOT / "examples" / "qfw_pulser_services.yaml")
+		.read_text(encoding="utf-8"))
+	descriptor = _load_descriptor()
+	monkeypatch.setattr(
+		device_access, "device_access_config_path", lambda: "cfg.yaml")
+	monkeypatch.setattr(
+		device_access, "load_yaml_config", lambda path: yaml.safe_load(text))
+
+	resolved = descriptor.resolve_descriptor(device_id)
+
+	assert manifest["services"][0]["credential-mode"] == "no-secret"
+	assert resolved["provider"] == "pasqal"
+	assert resolved["provider_device_id"] == provider_device_id
+	assert resolved["resource_type"] == "PasqalCloud"
+	assert resolved["libraries"] == ["qrmi"]
+	assert resolved["project_id"] == "proj"
+
 
 def test_select_qpu_passes_through_descriptor_fields(monkeypatch):
 	monkeypatch.delenv(device_access.QPU_DEVICE_ENV, raising=False)
@@ -395,6 +437,22 @@ def test_resolve_descriptor_carries_the_braket_fields(monkeypatch):
 	assert resolved["execution_owner"] == "qdmi"
 
 
+def test_resolve_descriptor_carries_the_pasqal_fields(monkeypatch):
+	descriptor = _load_descriptor()
+	monkeypatch.setattr(
+		device_access, "device_access_config_path", lambda: "cfg.yaml")
+	monkeypatch.setattr(
+		device_access, "load_yaml_config",
+		lambda path: _config(PASQAL_DEVICE))
+	monkeypatch.setenv(device_access.QPU_DEVICE_ENV, "dev")
+
+	resolved = descriptor.resolve_descriptor()
+	assert resolved["provider"] == "pasqal"
+	assert resolved["provider_device_id"] == "EMU_FREE"
+	assert resolved["resource_type"] == "PasqalCloud"
+	assert resolved["project_id"] == "proj-device"
+
+
 def test_resolve_descriptor_leaves_the_braket_fields_unset_when_unconfigured(
 		monkeypatch):
 	descriptor = _load_descriptor()
@@ -406,7 +464,7 @@ def test_resolve_descriptor_leaves_the_braket_fields_unset_when_unconfigured(
 
 	resolved = descriptor.resolve_descriptor()
 	for key in ("qdmi_device_id", "aws_region", "s3_results_uri",
-			"reservation_arn", "num_qubits", "max_shots"):
+			"reservation_arn", "num_qubits", "max_shots", "project_id"):
 		assert resolved[key] is None
 
 

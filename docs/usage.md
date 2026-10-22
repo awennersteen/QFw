@@ -1016,7 +1016,19 @@ Application
 ```
 
 The application uses its normal framework interface, such as a Qiskit backend
-or estimator. The trusted Slurm or site launcher exports
+or estimator. A Pulser program for a Pasqal device uses Pulser's own backend
+with the QFw connection, which needs `pulser-core` in the application's
+environment:
+
+```python
+import pulser
+from qfw_pulser import QFwConnection
+
+backend = pulser.QPUBackend(sequence, connection=QFwConnection())
+results = backend.run([{"runs": 100}], wait=True)
+```
+
+The trusted Slurm or site launcher exports
 `QFW_RESERVATION_ID` into the application process. The QFw backend or adapter
 reads it and attaches it to QPM execution requests.
 
