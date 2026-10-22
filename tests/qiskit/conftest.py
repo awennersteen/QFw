@@ -1,17 +1,5 @@
-# Shared setup for the tests that need QFw's own venv.
-#
-# These run outside the CI mock job, which installs no qiskit, and outside a
-# full QFw install there is no DEFw either. Each test file used to put the
-# services directory on the path and stand in its own minimal
-# defw_exception. That made collection order matter: whichever file was
-# imported first installed the stub the whole session then used, so a file
-# needing more exception types than the first one happened to define failed
-# on import. test_braket_qasm3 collects first alphabetically and defined only
-# DEFwExecutionError, which is why the drivers package could not be imported
-# from test_iqm_transpile.
-#
-# So do it once, here, before any test module is imported, and mint each
-# DEFw* name on demand instead of listing the ones a test needs today.
+# Share service imports and DEFw exception stubs across Qiskit tests.
+# Install before collection so exception identities do not depend on test order.
 
 import pathlib
 import sys

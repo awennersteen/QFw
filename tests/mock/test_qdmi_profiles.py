@@ -395,6 +395,27 @@ def test_the_iqm_profile_defaults():
 	assert profile.result_counts({"01": 3}, None) == {"01": 3}
 
 
+@pytest.mark.parametrize("provider", ["iqm", "aws", "ibm"])
+def test_resource_shot_caps_apply_to_every_provider(provider):
+	profile = profile_for({"provider": provider, "id": "limited-device", "max_shots": "10"})
+	assert profile.check_shots(10) is None
+	with pytest.raises(DEFwExecutionError, match="over the 10-shot cap"):
+		profile.check_shots(11)
+	assert profile_for({"provider": provider}).check_shots(10**6) is None
+
+
+@pytest.mark.parametrize("provider", ["iqm", "aws", "ibm"])
+def test_resource_timeouts_allow_a_client_override(provider):
+	profile = profile_for({"provider": provider, "job_timeout_seconds": "120"})
+	assert profile.timeout_seconds({}) == 120.0
+	assert profile.timeout_seconds({"timeout": "12"}) == 12.0
+	assert profile_for({"provider": provider}).timeout_seconds({}) == 300.0
+
+
+def test_amazon_braket_keeps_its_zero_shot_policy():
+	assert profile_for({"provider": "aws", "max_shots": "10"}).check_shots(0) is None
+
+
 # --- run_circuit goes through the profile -----------------------------------
 
 class _Job:
