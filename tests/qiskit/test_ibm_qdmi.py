@@ -13,20 +13,6 @@ IBMBackend = pytest.importorskip("ibm.qdmi.qiskit").IBMBackend
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 SERVICES = REPO_ROOT / "services"
-if str(SERVICES) not in sys.path:
-	sys.path.insert(0, str(SERVICES))
-
-if "defw_exception" not in sys.modules:
-	try:
-		import defw_exception  # noqa: F401
-	except ImportError:
-		stub = types.ModuleType("defw_exception")
-
-		class DEFwExecutionError(Exception):
-			pass
-
-		stub.DEFwExecutionError = DEFwExecutionError
-		sys.modules["defw_exception"] = stub
 
 from defw_exception import DEFwExecutionError  # noqa: E402
 

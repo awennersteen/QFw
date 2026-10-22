@@ -205,8 +205,12 @@ the credential files, and the environment the service needs.
 
 ### IBM
 
-IBM QDMI 1.0 supports IBM Cloud Qiskit Runtime and requires Python 3.11 or
-newer. Install the provider packages from `setup/qdmi-requirements.txt`, then
+IBM QDMI 1.0 supports IBM Cloud Qiskit Runtime
+(`IBMQiskitRuntimeService`) and requires Python 3.11 or newer. For other
+IBM resource types, set `libraries: [qrmi]`. Omitting `libraries` enables
+both QRMI and QDMI and routes device queries to QDMI by default.
+
+Install the provider packages from `setup/qdmi-requirements.txt`, then
 configure an IBM backend:
 
 ```yaml
@@ -219,7 +223,12 @@ qpus:
     libraries: [qdmi]
     preference: qdmi
     execution-owner: qdmi
+    job-timeout-seconds: 3600
 ```
+
+Set `job-timeout-seconds` to cover the expected queue and execution time.
+The default is 300 seconds; QFw cancels the job when it expires, even while
+queued. A circuit's `timeout` overrides this device setting.
 
 Under each user's `devices.ibm-torino` entry in the credential database, set:
 

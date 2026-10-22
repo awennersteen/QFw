@@ -51,6 +51,39 @@ def test_ibm_selects_the_profile_and_superconducting_technology():
 	assert profile.calibration_set_slot is None
 
 
+@pytest.mark.parametrize("resource_type", [
+	"IBMQuantumSystem", "IBMQuantumComputeService", "UnknownIBMResource"])
+def test_nonruntime_resources_fail_before_resolving_or_opening(monkeypatch, resource_type):
+	resolved = []
+	opened = []
+
+	def resolve(**kwargs):
+		resolved.append(kwargs)
+		return _credential()
+	monkeypatch.setattr(device_access, "resolve_device_access", resolve)
+	_install_backend(monkeypatch, opened)
+	driver = QdmiDriver(_descriptor(resource_type=resource_type))
+	with pytest.raises(DEFwExecutionError) as caught:
+		driver._device()
+	assert resource_type in str(caught.value)
+	assert "libraries: [qrmi]" in str(caught.value)
+	assert resolved == []
+	assert opened == []
+
+
+@pytest.mark.parametrize("selection", [
+	{}, {"resource_type": None}, {"resource_type": "IBMQiskitRuntimeService"}],
+	ids=["omitted", "none", "runtime"])
+def test_runtime_resources_keep_reservation_access(monkeypatch, selection):
+	opened = []
+	_install_backend(monkeypatch, opened)
+	driver = QdmiDriver(_descriptor(**selection))
+	driver._device(_credential())
+	assert opened[0]["api_key"] == "reserved-key"
+	assert opened[0]["instance_crn"] == "crn:reserved"
+	assert opened[0]["backend_name"] == "reserved-backend"
+
+
 def test_bound_access_wins_over_service_defaults(monkeypatch):
 	monkeypatch.setenv("QFW_QC_URL", "https://service.example/api/v1")
 	monkeypatch.setenv("QFW_API_KEY", "service-key")

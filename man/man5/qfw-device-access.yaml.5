@@ -55,18 +55,24 @@ QRMI resource type to open for the device, such as
 .B IQMServer
 or
 .BR IBMQiskitRuntimeService .
-Optional when the provider serves only one resource type. An
-.B ibm
-device must set it, because IBM serves
+Optional when the provider serves only one QRMI resource type. IBM devices
+using QRMI must select
 .BR IBMQiskitRuntimeService ,
 .BR IBMQuantumComputeService ,
-and
+or
 .BR IBMQuantumSystem .
+IBM QDMI supports only
+.BR IBMQiskitRuntimeService .
+A device using only QDMI can omit this field. For the other IBM resource
+types, set
+.B libraries
+to
+.BR [qrmi] .
 .TP
 .B service-crn
 IBM Cloud service instance CRN for an
 .B ibm
-device. QRMI requires one for every IBM resource type. An instance can serve
+device. Both QRMI and QDMI require one. An instance can serve
 several devices and many users, and a user can be assigned to several
 instances. This value is the default for users whose credential entry does not
 name an instance, which a file credential database does with
@@ -79,7 +85,7 @@ reservation's credential takes precedence over both.
 .B iam-endpoint
 IBM Cloud IAM endpoint that exchanges an API key for a token, for an
 .B ibm
-device. Optional. The default,
+device through QRMI or QDMI. Optional. The default,
 .BR https://iam.cloud.ibm.com ,
 serves public IBM Cloud.
 .B QFW_IBM_IAM_ENDPOINT
@@ -112,7 +118,11 @@ differs from the one the client uses.
 overrides it.
 .TP
 .B job-timeout-seconds
-Seconds QRMI allows a job before abandoning it, for an
+Seconds QFw waits for a QDMI job before requesting cancellation, including
+time spent in the provider queue. Defaults to 300 seconds; a timeout supplied
+with the circuit takes precedence.
+.IP
+For QRMI, seconds allowed before abandoning a job on an
 .B IBMQuantumSystem
 device, which requires the value. Optional here: it defaults to the same
 timeout this driver polls for, so QRMI does not give up on a job still being
@@ -165,6 +175,7 @@ qpus:
     provider: ibm
     provider-device-id: ibm_system_two
     resource-type: IBMQuantumSystem
+    libraries: [qrmi]
     url: https://qs.example/api/v1
     service-crn: "crn:v1:bluemix:public:quantum-computing:us-east:a/ACCT:INST::"
     s3-endpoint: https://store.example

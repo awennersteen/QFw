@@ -103,12 +103,19 @@ class QdmiProfile:
 		return {}
 
 	def check_shots(self, shots):
-		# A provider with a shot cap rejects here, before anything is billed.
-		return None
+		# Enforce the device's shot cap before a provider job exists.
+		cap = self._descriptor.get("max_shots")
+		if cap not in (None, "") and int(shots) > int(cap):
+			raise DEFwExecutionError(
+				f"{shots} shots is over the {cap}-shot cap for device "
+				f"{self._descriptor.get('id')!r} (max-shots in device-access config)")
 
 	def timeout_seconds(self, info):
-		# How long run_circuit waits for the job before cancelling it.
-		return float(info.get("timeout", DEFAULT_TIMEOUT_SECONDS))
+		# A client timeout overrides the device's wait before cancellation.
+		default = self._descriptor.get("job_timeout_seconds")
+		if default in (None, ""):
+			default = DEFAULT_TIMEOUT_SECONDS
+		return float(info.get("timeout", default))
 
 	def result_counts(self, counts, measurement):
 		# Key the device library's histogram the way the circuit's classical
@@ -294,30 +301,6 @@ class BraketQdmiProfile(QdmiProfile):
 			kwargs["custom3"] = str(reservation)
 		return kwargs
 
-	def check_shots(self, shots):
-		# Every Braket task is billed, so a device can carry a shot cap in
-		# device-access config and anything above it is refused here, before
-		# a task exists.
-		cap = self._descriptor.get("max_shots")
-		if cap in (None, ""):
-			return None
-		cap = int(cap)
-		if int(shots) > cap:
-			raise DEFwExecutionError(
-				f"{shots} shots is over the {cap}-shot cap for device "
-				f"{self._descriptor.get('id')!r} (max-shots in device-access "
-				"config)")
-		return None
-
-	def timeout_seconds(self, info):
-		# A Braket QPU queues tasks behind other customers', so the wait the
-		# driver allows before cancelling comes from the device's
-		# job-timeout-seconds. A timeout the client sends still wins.
-		default = self._descriptor.get("job_timeout_seconds")
-		if default in (None, ""):
-			default = DEFAULT_TIMEOUT_SECONDS
-		return float(info.get("timeout", default))
-
 	def result_counts(self, counts, measurement):
 		from util.braket_transcode import remap_counts
 		return remap_counts(counts, measurement)
@@ -335,6 +318,12 @@ class IbmQdmiProfile(QdmiProfile):
 	DEFAULT_QDMI_DEVICE_ID = "ibm.default"
 
 	def access(self, credential=None):
+		resource_type = (self._descriptor.get("resource_type")
+			or self._descriptor.get("resource-type"))
+		if resource_type and resource_type != "IBMQiskitRuntimeService":
+			raise DEFwExecutionError(
+				f"IBM QDMI cannot serve resource-type {resource_type!r}. "
+				"Set libraries: [qrmi] in device-access config for this IBM resource")
 		credential = dict(credential or {})
 		device_id = credential.get("device_id") or self._descriptor.get("id")
 		base_url = credential.get("url") or os.environ.get("QFW_QC_URL")
@@ -409,7 +398,7 @@ class IbmQdmiProfile(QdmiProfile):
 		circuit = load_qiskit_circuit(source)
 		if circuit.parameters:
 			raise DEFwExecutionError("IBM circuits must have bound parameters")
-		# Core's serializer rebuilds registers in declaration order.
+		# IBMBackend's serializer rebuilds registers in declaration order.
 		if [bit for register in circuit.cregs for bit in register] != circuit.clbits:
 			raise DEFwExecutionError(
 				"IBM circuits require classical registers that partition "
@@ -426,17 +415,7 @@ class IbmQdmiProfile(QdmiProfile):
 	def check_shots(self, shots):
 		if shots <= 0:
 			raise DEFwExecutionError("IBM shots must be positive")
-		cap = self._descriptor.get("max_shots")
-		if cap not in (None, "") and shots > int(cap):
-			raise DEFwExecutionError(
-				f"{shots} shots is over the {cap}-shot cap for IBM device "
-				f"{self._descriptor.get('id')!r} (max-shots in device-access config)")
-
-	def timeout_seconds(self, info):
-		default = self._descriptor.get("job_timeout_seconds")
-		if default in (None, ""):
-			default = DEFAULT_TIMEOUT_SECONDS
-		return float(info.get("timeout", default))
+		return super().check_shots(shots)
 
 	def technology(self):
 		return "superconducting"
